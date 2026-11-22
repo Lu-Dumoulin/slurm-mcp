@@ -96,11 +96,19 @@ def run_init(
         for name, target in (discover(host, user, home) if home else []):
             if target != home and _ask(f"Found ~/{name} -> {target}. Also allow it? (y/N)", input_fn).lower() in ("y", "yes"):
                 suggested.append(target)
+        out("\nThe tools will only be allowed to read inside these remote folders (and below them).")
+        if suggested:
+            out("Suggested folders:")
+            for r in suggested:
+                out(f"  {r}")
+            answer = input_fn("Press Enter to keep them, or type your own list (full paths separated by commas): ").strip()
+            roots_text = answer or ", ".join(suggested)
+        else:
+            roots_text = input_fn("Folders (full paths separated by commas, e.g. /home/bob/sims): ").strip()
         data = {
             "host": host,
             "user": user,
-            "remote_roots": [r.strip() for r in _ask(
-                "Remote directories the tools may read, absolute, comma-separated", input_fn, ", ".join(suggested)).split(",") if r.strip()],
+            "remote_roots": [r.strip() for r in roots_text.split(",") if r.strip()],
             "local_dir": _ask("Local folder for downloaded results", input_fn, "~/slurm-mcp-downloads"),
         }
         df = _ask("Default parameter table path on the cluster (optional, Enter to skip)", input_fn)
