@@ -18,9 +18,12 @@ cluster over SSH.
 - **Safety.** Read-only by default. Submitting or cancelling is switched off until you enable
   it, and then needs a dry run that shows the full script, a one-time token, and your approval.
 
-I work on simulations that run on a university cluster (UNIGE Baobab) and wanted an
-assistant that can answer "did my sweep finish, and what does the log say?" without me
-pasting terminal output. The design follows the SSH layer of
+I built this for my lab. We run simulations on a university cluster (UNIGE Baobab), and most
+of us now write code with a coding agent. The agent can edit the code but could not see the
+cluster, so we ended up pasting `squeue` output and logs back into the chat. This server lets
+the agent answer "did my sweep finish, and what does the log say?" itself, and run a test job
+when you approve it. Each person runs it on their own machine with their own SSH key and
+config. The design follows the SSH layer of
 [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool I use to run and download parameter sweeps:
 one shared SSH connection, and incremental downloads that compare modification times.
 
