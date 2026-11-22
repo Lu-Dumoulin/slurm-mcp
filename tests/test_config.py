@@ -53,4 +53,5 @@ def test_example_config_stays_valid():
     assert set(cfg.gpu_types) == {"H100", "A100-40Gb", "A100-80Gb"}  # CommonUI's ENUM_GPUs
     gpu = cfg.presets["gpu"]
     assert gpu.gpu_types == ("H100", "A100-40Gb", "A100-80Gb") and gpu.time == "0-12:00:00" and gpu.mem == "3000M"
+    assert all(cfg.presets[n].cpus == 1 and cfg.presets[n].max_cpus_per_gpu == 4 for n in ("gpu", "gpu_debug"))
     assert cfg.presets["smoke"].time == "00:15:00" and cfg.presets["debug"].time == "00:30:00"

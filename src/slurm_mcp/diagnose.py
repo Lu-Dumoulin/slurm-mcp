@@ -3,7 +3,9 @@ it states what the numbers say and does not guess beyond them."""
 
 from __future__ import annotations
 
+import posixpath
 import re
+from dataclasses import dataclass
 from typing import Any
 
 _UNITS = {"K": 1 / 1024, "M": 1, "G": 1024, "T": 1024 * 1024}
@@ -18,7 +20,19 @@ PENDING_REASONS = {
     "QOSMaxJobsPerUserLimit": "you reached the maximum number of running jobs for this QOS",
     "AssocGrpCpuLimit": "your group reached its CPU limit",
     "JobHeldUser": "held by the user (release with scontrol release)",
+    "BadConstraints": "the job's constraints (for example GPU features) cannot be satisfied, so it will never start",
+    "BeginTime": "waiting for its requested start time",
+    "JobArrayTaskLimit": "the array's concurrent task limit is reached; more tasks start as others finish",
+    "AssocMaxJobsLimit": "you reached the maximum number of running jobs for your account",
+    "PartitionDown": "the partition is currently down",
+    "PartitionNodeLimit": "the job asks for more nodes than the partition allows, so it will never start",
 }
+
+
+def clean_reason(reason: str | None) -> str:
+    """Slurm reports "None" for a job without a reason yet; treat it like no reason."""
+    r = (reason or "").strip()
+    return "" if r.lower() in ("", "none", "(null)") else r
 
 
 def parse_size_mb(text: str) -> float | None:
@@ -33,7 +47,7 @@ def _base(state: str) -> str:
     return state.split()[0].rstrip("+") if state else ""
 
 
-def diagnose(rows: list[dict[str, str]], scontrol: dict[str, str] | None) -> dict[str, Any]:
+def diagnose(rows: list[dict[str, str]], scontrol: dict[str, str] | None, reason: str | None = None) -> dict[str, Any]:
     if not rows and not scontrol:
         return {"state": "UNKNOWN", "findings": ["no accounting data and Slurm no longer knows this job"]}
     main = next((r for r in rows if "." not in r["jobid"]), rows[0] if rows else {})
@@ -42,8 +56,11 @@ def diagnose(rows: list[dict[str, str]], scontrol: dict[str, str] | None) -> dic
     exit_code = main.get("exitcode", "")
 
     if state == "PENDING":
-        reason = (scontrol or {}).get("Reason", "")
-        findings.append(f"pending ({reason or 'reason unknown'})" + (f": {PENDING_REASONS[reason]}" if reason in PENDING_REASONS else ""))
+        why = clean_reason(reason) or clean_reason((scontrol or {}).get("Reason"))
+        if not why:
+            findings.append("pending")
+        else:
+            findings.append(f"pending ({why})" + (f": {PENDING_REASONS[why]}" if why in PENDING_REASONS else ""))
     elif state == "RUNNING":
         findings.append(f"running for {main.get('elapsed') or (scontrol or {}).get('RunTime', '?')}")
     elif state == "COMPLETED":
@@ -77,3 +94,67 @@ def diagnose(rows: list[dict[str, str]], scontrol: dict[str, str] | None) -> dic
         elif ratio < 0.3 and req >= 2048:
             findings.append(f"memory was over-requested: peak {peak:.0f} MB of {req:.0f} MB; you could ask for less")
     return {"state": state, "exit_code": exit_code or None, "findings": findings, "memory": memory}
+
+
+# --- where a job wrote its output ---------------------------------------------------------
+
+_SPEC_RE = re.compile(r"%(.)")
+
+
+def expand_log_pattern(pattern: str, job_id: str, job_name: str, user: str) -> str | None:
+    """Expand the filename patterns sbatch accepts (%j %A %a %x %u %%). None if not possible.
+
+    %j of an array task cannot be recovered from `123_4`, and other specifiers (%N, %t, ...)
+    depend on where the task ran, so those are reported as unknown rather than guessed.
+    """
+    base, _, task = job_id.partition("_")
+    values = {"A": base, "x": job_name, "u": user, "%": "%"}
+    if task:
+        values["a"] = task
+    else:
+        values["j"] = values["J"] = base
+
+    def one(m: re.Match[str]) -> str:
+        if m.group(1) not in values:
+            raise KeyError(m.group(1))
+        return values[m.group(1)]
+
+    try:
+        return _SPEC_RE.sub(one, pattern)
+    except KeyError:
+        return None
+
+
+@dataclass(frozen=True)
+class LogPaths:
+    stdout: str | None   # None: not known
+    stderr: str | None   # None: not known (and not merged)
+    merged: bool         # stderr goes to the stdout file (no separate --error)
+
+
+def resolve_log_paths(
+    scontrol: dict[str, str] | None,
+    sacct_paths: dict[str, str] | None,
+    job_id: str,
+    job_name: str,
+    user: str,
+) -> LogPaths:
+    """Combine what scontrol (live jobs, already expanded) and sacct (patterns) report."""
+    live, acct = scontrol or {}, sacct_paths or {}
+    workdir = live.get("WorkDir") or acct.get("workdir") or ""
+    raw_out = live.get("StdOut") or acct.get("stdout") or ""
+    raw_err = live.get("StdErr") or acct.get("stderr") or ""
+    if not raw_out and not raw_err and sacct_paths is not None and workdir:
+        raw_out = "slurm-%A_%a.out" if "_" in job_id else "slurm-%j.out"  # Slurm's default file
+
+    def full(pattern: str) -> str | None:
+        if not pattern:
+            return None
+        expanded = expand_log_pattern(pattern, job_id, job_name, user)
+        if expanded is None:
+            return None
+        return expanded if expanded.startswith("/") else (posixpath.join(workdir, expanded) if workdir else None)
+
+    out, err = full(raw_out), full(raw_err)
+    merged = out is not None and (not raw_err or err == out)
+    return LogPaths(out, None if merged else err, merged)

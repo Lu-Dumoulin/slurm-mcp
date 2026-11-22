@@ -68,6 +68,7 @@ class Preset:
     gpus: int = 1
     max_gpus: int = 1
     gpu_types: tuple[str, ...] = ()  # default selection, names from the config's gpu_types table
+    max_cpus_per_gpu: int = 0        # GPU presets: cap on CPUs is this times the GPUs requested
 
     @classmethod
     def from_dict(cls, name: str, d: dict[str, Any], known_gpu_types: dict[str, str]) -> Preset:
@@ -77,7 +78,7 @@ class Preset:
         if not PRESET_NAME_RE.fullmatch(name):
             raise bad("invalid name")
         allowed = {"partition", "time", "cpus", "mem", "max_time", "max_cpus", "max_mem",
-                   "description", "gpu", "gpus", "max_gpus", "gpu_types"}
+                   "description", "gpu", "gpus", "max_gpus", "gpu_types", "max_cpus_per_gpu"}
         if set(d) - allowed:
             raise bad(f"unknown keys {sorted(set(d) - allowed)}")
         for key in ("partition", "time", "mem"):
@@ -95,15 +96,24 @@ class Preset:
         if secs > max_secs or parse_mem_mb(mem) > parse_mem_mb(max_mem):
             raise bad("default exceeds its own max")
         cpus = d.get("cpus", 1)
-        max_cpus = d.get("max_cpus", cpus)
         gpu = d.get("gpu", False)
         gpus = d.get("gpus", 1 if gpu else 0)
         max_gpus = d.get("max_gpus", gpus)
-        ints = (cpus, max_cpus, gpus, max_gpus)
+        per_gpu = d.get("max_cpus_per_gpu", 0)
+        if gpu and "max_cpus" in d:
+            raise bad("GPU presets use max_cpus_per_gpu, not max_cpus")
+        if not gpu and per_gpu:
+            raise bad("max_cpus_per_gpu only makes sense with gpu = true")
+        if gpu and "max_cpus_per_gpu" not in d and isinstance(cpus, int) and gpus >= 1:
+            per_gpu = -(-cpus // gpus)  # smallest cap that allows the default
+        max_cpus = per_gpu * max_gpus if gpu and isinstance(per_gpu, int) else d.get("max_cpus", cpus)
+        ints = (cpus, max_cpus, gpus, max_gpus, per_gpu)
         if not all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in ints):
             raise bad("cpus, max_cpus, gpus and max_gpus must be whole numbers")
-        if cpus < 1 or cpus > max_cpus or gpus > max_gpus:
+        if cpus < 1 or gpus > max_gpus:
             raise bad("default exceeds its own max, or cpus < 1")
+        if gpu and cpus > per_gpu * gpus or not gpu and cpus > max_cpus:
+            raise bad("default cpus exceed their own cap")
         if not isinstance(gpu, bool):
             raise bad("gpu must be true or false")
         if gpu and gpus < 1:
@@ -115,7 +125,7 @@ class Preset:
         if unknown:
             raise bad(f"gpu_types {unknown} are not in the top-level gpu_types table")
         return cls(name, d["partition"], d["time"], cpus, mem, d.get("max_time", d["time"]),
-                   max_cpus, max_mem, str(d.get("description", "")), gpu, gpus, max_gpus, types)
+                   max_cpus, max_mem, str(d.get("description", "")), gpu, gpus, max_gpus, types, per_gpu)
 
 
 def parse_gpu_table(table: Any) -> dict[str, str]:

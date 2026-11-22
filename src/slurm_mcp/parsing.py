@@ -31,6 +31,15 @@ def parse_sacct(text: str) -> list[dict[str, str]]:
     return parse_delimited(text, [f.lower() for f in SACCT_FIELDS])
 
 
+def parse_sacct_paths(text: str) -> dict[str, str] | None:
+    """First row of `sacct --format=WorkDir,StdOut,StdErr`, or None if there is no usable row."""
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split(FIELD_SEP, 2)]
+        if len(parts) == 3 and (not parts[0] or parts[0].startswith("/")):
+            return {"workdir": parts[0], "stdout": parts[1], "stderr": parts[2]}
+    return None
+
+
 _KV_RE = re.compile(r"(\w+)=(.*?)(?=\s+\w+=|$)")
 
 

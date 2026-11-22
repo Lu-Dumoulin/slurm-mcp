@@ -176,3 +176,11 @@ def test_type_missing_on_every_partition_is_refused(tmp_path):
 def test_failed_availability_check_warns_but_does_not_block(pcfg):
     out = dry(pcluster(pcfg, sinfo=("", 1)))
     assert any("could not check" in w for w in out["warnings"]) and out["confirmation_token"]
+
+
+def test_list_presets_shows_cpus_per_gpu_for_gpu_presets(tmp_path):
+    presets = {"gpu": {**PRESETS["gpu"], "max_cpus_per_gpu": 4, "max_gpus": 2}, "debug": PRESETS["debug"]}
+    info = pcluster(Config.from_dict(raw(tmp_path, presets=presets))).describe_presets()
+    caps = {p["name"]: p["caps"] for p in info["presets"]}
+    assert caps["gpu"]["cpus_per_gpu"] == 4 and "cpus" not in caps["gpu"]
+    assert caps["debug"]["cpus"] == 4 and "cpus_per_gpu" not in caps["debug"]

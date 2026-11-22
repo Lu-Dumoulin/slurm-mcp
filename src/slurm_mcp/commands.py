@@ -111,6 +111,11 @@ def sacct_recent_cmd(days: int) -> list[str]:
     return ["sacct", "-X", "-S", f"now-{days}days", "-P", "-n", f"--format={','.join(SACCT_FIELDS)}"]
 
 
+def sacct_paths_cmd(job_id: str) -> list[str]:
+    """Working directory and log file patterns of a job (available even after scontrol forgets it)."""
+    return ["sacct", "-j", validate_job_id(job_id), "-X", "-P", "-n", "--format=WorkDir,StdOut,StdErr"]
+
+
 def scontrol_cmd(job_id: str) -> list[str]:
     return ["scontrol", "show", "job", "-o", validate_job_id(job_id)]
 

@@ -89,17 +89,23 @@ def resolve_spec(
     if parse_time(use_time) > parse_time(preset.max_time):
         raise SlurmMcpError(f"time {use_time} exceeds the cap {preset.max_time} of preset {preset.name!r}")
     use_cpus = preset.cpus if cpus is None else cpus
-    if not isinstance(use_cpus, int) or isinstance(use_cpus, bool) or not 1 <= use_cpus <= preset.max_cpus:
-        raise SlurmMcpError(f"cpus must be between 1 and {preset.max_cpus} for preset {preset.name!r}")
-    use_mem = normalize_mem(mem) if mem else preset.mem
-    if parse_mem_mb(use_mem) > parse_mem_mb(preset.max_mem):
-        raise SlurmMcpError(f"mem {use_mem} exceeds the cap {preset.max_mem} of preset {preset.name!r}")
-
     use_gpus, names, constraint = 0, (), None
     if gpu:
         use_gpus = preset.gpus if gpus is None else gpus
         if not isinstance(use_gpus, int) or isinstance(use_gpus, bool) or not 1 <= use_gpus <= preset.max_gpus:
             raise SlurmMcpError(f"gpus must be between 1 and {preset.max_gpus} for preset {preset.name!r}")
+        cpu_cap = preset.max_cpus_per_gpu * use_gpus  # per-GPU cap, so 2 GPUs allow twice as many CPUs
+        cpu_cap_text = f"{cpu_cap} ({preset.max_cpus_per_gpu} per GPU x {use_gpus} GPU)"
+    else:
+        cpu_cap = preset.max_cpus
+        cpu_cap_text = str(cpu_cap)
+    if not isinstance(use_cpus, int) or isinstance(use_cpus, bool) or not 1 <= use_cpus <= cpu_cap:
+        raise SlurmMcpError(f"cpus must be between 1 and {cpu_cap_text} for preset {preset.name!r}")
+    use_mem = normalize_mem(mem) if mem else preset.mem
+    if parse_mem_mb(use_mem) > parse_mem_mb(preset.max_mem):
+        raise SlurmMcpError(f"mem {use_mem} exceeds the cap {preset.max_mem} of preset {preset.name!r}")
+
+    if gpu:
         names = tuple(gpu_types) if gpu_types else preset.gpu_types
         unknown = [n for n in names if n not in gpu_table]
         if unknown:

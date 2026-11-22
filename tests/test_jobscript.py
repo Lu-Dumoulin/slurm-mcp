@@ -144,3 +144,24 @@ def test_preset_config_validation():
         cpu_preset(partition="a;b")
     with pytest.raises(ConfigError, match="only make sense"):
         cpu_preset(gpus=1)
+
+
+def test_gpu_cpu_cap_is_per_gpu():
+    p = preset(max_gpus=2, cpus=1, max_cpus_per_gpu=4)
+    assert spec(p, cpus=4).cpus == 4                       # 1 GPU: up to 4
+    with pytest.raises(SlurmMcpError, match=r"between 1 and 4 \(4 per GPU x 1 GPU\)"):
+        spec(p, cpus=5)
+    assert spec(p, cpus=8, gpus=2).cpus == 8               # 2 GPUs: up to 8
+    with pytest.raises(SlurmMcpError, match=r"between 1 and 8 \(4 per GPU x 2 GPU\)"):
+        spec(p, cpus=9, gpus=2)
+    assert spec(p).cpus == 1                               # default stays 1
+
+
+def test_gpu_preset_cpu_cap_config_rules():
+    with pytest.raises(ConfigError, match="max_cpus_per_gpu"):
+        preset(max_cpus=4)                                 # flat cap is for CPU presets only
+    with pytest.raises(ConfigError, match="only makes sense"):
+        cpu_preset(max_cpus_per_gpu=4)
+    with pytest.raises(ConfigError, match="default cpus exceed"):
+        preset(cpus=8, max_cpus_per_gpu=4)                 # default above 4 per GPU
+    assert preset(cpus=6).max_cpus_per_gpu == 6            # unset cap: just allows the default

@@ -15,8 +15,8 @@ from . import commands as cmd
 from .config import Config
 from .confirm import ConfirmationStore
 from .errors import RemoteError, SlurmMcpError
-from .parsing import parse_find, parse_partition_features, parse_sacct, parse_scontrol, parse_squeue
-from .diagnose import diagnose
+from .parsing import parse_find, parse_sacct_paths, parse_partition_features, parse_sacct, parse_scontrol, parse_squeue
+from .diagnose import clean_reason, diagnose, resolve_log_paths
 from .jobscript import build_script, resolve_spec, summarize
 from .paths import is_safe_relative, validate_remote_path
 from .runner import Runner
@@ -77,39 +77,72 @@ class Cluster:
         details = parse_scontrol(live) if live else None
         if details:
             details = {k: v for k, v in details.items() if k in cmd.SCONTROL_KEYS}
+            if details.get("JobState") == "PENDING" and not clean_reason(details.get("Reason")):
+                # scontrol often says "None" for a job that has just been queued: ask squeue
+                row = next((r for r in self.queue() if r["job_id"] == job_id), None)
+                reason = clean_reason(row["reason"] if row else "")
+                details.pop("Reason", None)
+                if reason:
+                    details["Reason"] = reason
         if not accounting and not details:
             raise SlurmMcpError(f"job {job_id} not found")
         return {"job_id": job_id, "accounting": accounting, "scontrol": details}
+
+    def _log_paths(self, status: dict[str, Any]):
+        """Where the job wrote its output, from scontrol while it is known and sacct afterwards."""
+        job_id = status["job_id"]
+        live = status["scontrol"]
+        acct_paths = None
+        if not (live and live.get("StdOut")):
+            acct_paths = parse_sacct_paths(self._ssh(cmd.sacct_paths_cmd(job_id), allow_failure=True) or "")
+        rows = status["accounting"]
+        name = (live or {}).get("JobName") or (rows[0].get("jobname", "") if rows else "")
+        return resolve_log_paths(live, acct_paths, job_id, name, self.cfg.user)
 
     def job_log(self, job_id: str, stream: str = "out", lines: int = 50) -> dict[str, Any]:
         if stream not in ("out", "err"):
             raise SlurmMcpError("stream must be 'out' or 'err'")
         status = self.job_status(job_id)
-        info = status["scontrol"] or {}
-        key = "StdOut" if stream == "out" else "StdErr"
-        path = info.get(key)
+        logs = self._log_paths(status)
+        path = logs.stdout if stream == "out" or logs.merged else logs.stderr
         if not path:
             raise SlurmMcpError(
-                f"log path for job {job_id} is no longer known to Slurm; use tail_file with the path"
+                f"log path for job {job_id} is not known to Slurm; use tail_file with the path"
             )
-        return self.tail_file(path, lines)
+        result = self.tail_file(path, lines)
+        if stream == "err" and logs.merged:
+            result["note"] = "stderr is merged into the stdout log, so this is the same file"
+        return result
 
     def diagnose_job(self, job_id: str, lines: int = 30) -> dict[str, Any]:
         """Verdict from accounting data plus the end of stdout and stderr (read-only)."""
         status = self.job_status(job_id)
         verdict = diagnose(status["accounting"], status["scontrol"])
-        info = status["scontrol"] or {}
-        logs: dict[str, Any] = {}
-        for stream, key in (("stderr", "StdErr"), ("stdout", "StdOut")):
-            path = info.get(key)
-            if not path:
-                logs[stream] = {"note": "log path no longer known to Slurm; use tail_file with the path"}
-                continue
-            try:
-                logs[stream] = self.tail_file(path, lines)
-            except SlurmMcpError as exc:  # keep the verdict even if one log cannot be read
-                logs[stream] = {"path": path, "note": str(exc)}
+        if verdict["state"] == "PENDING":
+            note = {"note": "the job has not started yet, so there are no logs yet"}
+            logs: dict[str, Any] = {"stdout": dict(note), "stderr": dict(note)}
+            return {"job_id": status["job_id"], **verdict, "logs": logs, "accounting": status["accounting"]}
+
+        paths = self._log_paths(status)
+        logs = {}
+        if paths.stdout is None:
+            logs["stdout"] = {"note": "log path not available from Slurm; use tail_file with the path"}
+        else:
+            logs["stdout"] = self._tail_or_note(paths.stdout, lines)
+        if paths.merged:
+            logs["stderr"] = {"merged_into_stdout": True,
+                              "note": "stderr is merged into the stdout log (no separate --error file)"}
+        elif paths.stderr is None:
+            logs["stderr"] = {"note": "stderr log path no longer known to Slurm; use tail_file with the path"}
+        else:
+            logs["stderr"] = self._tail_or_note(paths.stderr, lines)
         return {"job_id": status["job_id"], **verdict, "logs": logs, "accounting": status["accounting"]}
+
+    def _tail_or_note(self, path: str, lines: int) -> dict[str, Any]:
+        try:
+            return self.tail_file(path, lines)
+        except SlurmMcpError as exc:  # keep the verdict even if one log cannot be read
+            return {"path": path, "note": str(exc)}
 
     def tail_file(self, path: str, lines: int = 50) -> dict[str, Any]:
         path = self._path(path)
@@ -245,8 +278,9 @@ class Cluster:
                     "partition": p.partition,
                     "defaults": {"time": p.time, "cpus": p.cpus, "mem": p.mem,
                                  **({"gpus": p.gpus, "gpu_types": list(p.gpu_types)} if p.gpu else {})},
-                    "caps": {"time": p.max_time, "cpus": p.max_cpus, "mem": p.max_mem,
-                             **({"gpus": p.max_gpus} if p.gpu else {})},
+                    "caps": {"time": p.max_time, "mem": p.max_mem,
+                             **({"gpus": p.max_gpus, "cpus_per_gpu": p.max_cpus_per_gpu} if p.gpu
+                                else {"cpus": p.max_cpus})},
                 }
                 for p in self.cfg.presets.values()
             ],
