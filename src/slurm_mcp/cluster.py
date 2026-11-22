@@ -14,9 +14,9 @@ from typing import Any
 from . import commands as cmd
 from .config import Config
 from .confirm import ConfirmationStore
-from .errors import RemoteError, SlurmMcpError
+from .errors import RemoteError, RemoteFileNotFound, SlurmMcpError
 from .parsing import parse_find, parse_sacct_paths, parse_partition_features, parse_sacct, parse_scontrol, parse_squeue
-from .diagnose import clean_reason, diagnose, resolve_log_paths
+from .diagnose import clean_reason, diagnose, never_started, resolve_log_paths
 from .jobscript import build_script, resolve_spec, summarize
 from .paths import is_safe_relative, validate_remote_path
 from .runner import Runner
@@ -118,9 +118,10 @@ class Cluster:
         """Verdict from accounting data plus the end of stdout and stderr (read-only)."""
         status = self.job_status(job_id)
         verdict = diagnose(status["accounting"], status["scontrol"])
-        if verdict["state"] == "PENDING":
-            note = {"note": "the job has not started yet, so there are no logs yet"}
-            logs: dict[str, Any] = {"stdout": dict(note), "stderr": dict(note)}
+        if verdict["state"] == "PENDING" or never_started(status["accounting"]):
+            text = ("the job has not started yet, so there are no logs yet" if verdict["state"] == "PENDING"
+                    else "the job never started, so there are no logs")
+            logs: dict[str, Any] = {"stdout": {"note": text}, "stderr": {"note": text}}
             return {"job_id": status["job_id"], **verdict, "logs": logs, "accounting": status["accounting"]}
 
         paths = self._log_paths(status)
@@ -141,14 +142,20 @@ class Cluster:
     def _tail_or_note(self, path: str, lines: int) -> dict[str, Any]:
         try:
             return self.tail_file(path, lines)
+        except RemoteFileNotFound:
+            return {"path": path, "note": f"log file not found at {path}"}
         except SlurmMcpError as exc:  # keep the verdict even if one log cannot be read
             return {"path": path, "note": str(exc)}
 
     def tail_file(self, path: str, lines: int = 50) -> dict[str, Any]:
         path = self._path(path)
         n = self._clamp_lines(lines)
-        text = self._ssh(cmd.tail_cmd(path, n)) or ""
-        return {"path": path, "lines_requested": n, "text": text}
+        res = self.runner.run(cmd.ssh_argv(self.cfg, cmd.tail_cmd(path, n)), self.cfg.command_timeout)
+        if res.returncode == 1 and "No such file" in res.stderr:
+            raise RemoteFileNotFound(f"file not found at {path}")
+        if res.returncode != 0:
+            self._ssh(cmd.tail_cmd(path, n))  # re-raises with the standard SSH or remote error message
+        return {"path": path, "lines_requested": n, "text": res.stdout}
 
     # --- files ------------------------------------------------------------------
     def _list(self, directory: str, max_depth: int):

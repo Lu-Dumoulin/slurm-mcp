@@ -15,3 +15,7 @@ class PathError(SlurmMcpError):
 
 class RemoteError(SlurmMcpError):
     """The remote command or the SSH connection failed."""
+
+
+class RemoteFileNotFound(RemoteError):
+    """A file that was asked for does not exist on the cluster."""

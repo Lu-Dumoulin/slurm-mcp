@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from .diagnose import clean_reason
 from .paths import SAFE_PATH_RE
 from .commands import FIELD_SEP, SACCT_FIELDS, SQUEUE_FIELDS
 from .sync import RemoteFile
@@ -24,7 +25,10 @@ def parse_delimited(text: str, names: Sequence[str]) -> list[dict[str, str]]:
 
 
 def parse_squeue(text: str) -> list[dict[str, str]]:
-    return parse_delimited(text, [n for n, _ in SQUEUE_FIELDS])
+    rows = parse_delimited(text, [n for n, _ in SQUEUE_FIELDS])
+    for row in rows:
+        row["reason"] = clean_reason(row["reason"])  # "(None)" means no reason yet
+    return rows
 
 
 def parse_sacct(text: str) -> list[dict[str, str]]:
@@ -40,7 +44,9 @@ def parse_sacct_paths(text: str) -> dict[str, str] | None:
     return None
 
 
-_KV_RE = re.compile(r"(\w+)=(.*?)(?=\s+\w+=|$)")
+# Keys are words, and one has a colon (AllocNode:Sid); a value runs up to the next key.
+_KEY = r"[A-Za-z][A-Za-z0-9_]*(?::[A-Za-z0-9_]+)?"
+_KV_RE = re.compile(rf"({_KEY})=(.*?)(?=\s+{_KEY}=|$)")
 
 
 def parse_scontrol(text: str) -> dict[str, str]:

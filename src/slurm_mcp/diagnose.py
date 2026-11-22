@@ -30,9 +30,9 @@ PENDING_REASONS = {
 
 
 def clean_reason(reason: str | None) -> str:
-    """Slurm reports "None" for a job without a reason yet; treat it like no reason."""
+    """Slurm reports "None" or "(None)" for a job without a reason yet; treat it like no reason."""
     r = (reason or "").strip()
-    return "" if r.lower() in ("", "none", "(null)") else r
+    return "" if r.strip("()").lower() in ("", "none", "null") else r
 
 
 def parse_size_mb(text: str) -> float | None:
@@ -158,3 +158,9 @@ def resolve_log_paths(
     out, err = full(raw_out), full(raw_err)
     merged = out is not None and (not raw_err or err == out)
     return LogPaths(out, None if merged else err, merged)
+
+
+def never_started(rows: list[dict[str, str]]) -> bool:
+    """True when accounting has no start time for the job itself (cancelled while pending, say)."""
+    main = next((r for r in rows if "." not in r.get("jobid", "")), None)
+    return bool(main) and main.get("start", "").strip().lower() in ("", "unknown", "none")
