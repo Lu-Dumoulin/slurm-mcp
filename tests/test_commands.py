@@ -37,3 +37,8 @@ def test_recent_days_clamped():
 def test_scp_uses_double_dash(cfg):
     argv = c.scp_download_argv(cfg, "/scratch/alice/x", "/tmp/x")
     assert argv[-3:] == ["--", "alice@login.example.org:/scratch/alice/x", "/tmp/x"]
+
+
+def test_dir_links_cmd_is_quoted_for_the_remote_shell(cfg):
+    line = c.ssh_argv(cfg, c.dir_links_cmd("/home/alice"))[-1]
+    assert line == "find /home/alice -maxdepth 1 -type l -xtype d -printf '%f\\n' -exec readlink -f -- '{}' ';'"

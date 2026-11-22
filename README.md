@@ -49,27 +49,6 @@ confirmation token) is not implemented yet.
   setup. The server runs `ssh` with `BatchMode=yes`, so it can never sit on a password
   prompt.
 
-## One shared connection
-
-Clusters often throttle logins. All calls go through one OpenSSH `ControlMaster`
-connection (`ControlPersist`, default 10 minutes). Open it once in a terminal, which is
-also where a password or second factor is entered.
-
-Run it in a normal terminal on your own computer (Terminal or iTerm on macOS), not
-inside Claude and not on the cluster. The virtual environment must be active, or use
-the full path `/path/to/slurm-mcp/.venv/bin/slurm-mcp login`:
-
-```bash
-slurm-mcp login
-```
-
-It asks for your password or key passphrase, then returns the prompt while the
-connection stays open in the background.
-
-`slurm-mcp check` reports whether the shared connection is alive. If it has expired, tools
-return a message telling the model to ask you to run `slurm-mcp login`. This is macOS and
-Linux only, since Windows OpenSSH does not support multiplexing.
-
 ## Install and configure
 
 Python 3.11 or newer. The SDK is `mcp` 2.x (`MCPServer`, which replaced `FastMCP`).
@@ -81,10 +60,15 @@ On macOS or Linux, from the folder where you cloned the repository:
 ```
 
 This creates a virtual environment, installs the package, and runs `slurm-mcp init`,
-which asks for the login host, your username, the remote directories the tools may read
+which asks for the login host and your username, then offers to test the
+connection. If it works, `init` reports your remote home directory and proposes it as the
+default for `remote_roots`. It also looks for directory symlinks in your home folder
+(on many clusters `~/scratch` is one), shows the real target of each, and asks whether to
+allow it as an additional root. Roots should be real paths, since symlinks are not
+resolved at run time. It asks for the remote directories the tools may read
 (`remote_roots`), the local download folder (`local_dir`) and an optional default
 parameter table. It validates the answers and writes `~/.config/slurm-mcp/config.toml`.
-It never overwrites an existing config without asking. On Windows use `install.bat`.
+The test login also opens the shared SSH connection on macOS and Linux (see below). It never overwrites an existing config without asking. On Windows use `install.bat`.
 
 By hand instead:
 
@@ -117,6 +101,27 @@ Add to `claude_desktop_config.json`:
   }
 }
 ```
+
+## One shared connection
+
+Clusters often throttle logins. All calls go through one OpenSSH `ControlMaster`
+connection (`ControlPersist`, default 10 minutes). Open it once in a terminal, which is
+also where a password or second factor is entered.
+
+Run it in a normal terminal on your own computer (Terminal or iTerm on macOS), not
+inside Claude and not on the cluster. The virtual environment must be active, or use
+the full path `/path/to/slurm-mcp/.venv/bin/slurm-mcp login`:
+
+```bash
+slurm-mcp login
+```
+
+It asks for your password or key passphrase, then returns the prompt while the
+connection stays open in the background.
+
+`slurm-mcp check` reports whether the shared connection is alive. If it has expired, tools
+return a message telling the model to ask you to run `slurm-mcp login`. This is macOS and
+Linux only, since Windows OpenSSH does not support multiplexing.
 
 ## Example session
 

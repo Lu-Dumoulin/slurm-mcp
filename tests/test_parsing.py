@@ -32,3 +32,11 @@ def test_scontrol_oneline():
 def test_find_skips_bad_lines():
     files = parse_find("a.csv\t10\t1700000000.5\nbroken line\nb/c.txt\tNaN\t1\nd\t3\t5.0\n")
     assert [(f.rel, f.size, f.mtime) for f in files] == [("a.csv", 10, 1700000000.5), ("d", 3, 5.0)]
+
+
+def test_parse_dir_links():
+    from slurm_mcp.parsing import parse_dir_links
+
+    text = "scratch\n/srv/beegfs/scratch/users/b/bob\nweird name\n/srv/x\nevil\n/srv/../etc\nodd\n/srv/a b\n"
+    assert parse_dir_links(text) == [("scratch", "/srv/beegfs/scratch/users/b/bob")]
+    assert parse_dir_links("") == []

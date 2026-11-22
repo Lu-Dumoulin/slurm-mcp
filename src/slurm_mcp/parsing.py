@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
+from .paths import SAFE_PATH_RE
 from .commands import FIELD_SEP, SACCT_FIELDS, SQUEUE_FIELDS
 from .sync import RemoteFile
 
@@ -36,6 +37,23 @@ _KV_RE = re.compile(r"(\w+)=(.*?)(?=\s+\w+=|$)")
 def parse_scontrol(text: str) -> dict[str, str]:
     """Parse `scontrol show job -o` (one line of Key=Value pairs)."""
     return {k: v.strip() for k, v in _KV_RE.findall(text.strip())}
+
+
+_LINK_NAME_RE = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def parse_dir_links(text: str) -> list[tuple[str, str]]:
+    """Pairs of (link name, resolved absolute target) from `dir_links_cmd` output.
+
+    Remote text is shown in the user's terminal, so anything outside a conservative
+    character set is dropped.
+    """
+    lines = [ln for ln in text.splitlines() if ln]
+    pairs = []
+    for name, target in zip(lines[0::2], lines[1::2]):
+        if _LINK_NAME_RE.fullmatch(name) and SAFE_PATH_RE.fullmatch(target) and ".." not in target.split("/"):
+            pairs.append((name, target))
+    return pairs
 
 
 def parse_find(text: str) -> list[RemoteFile]:

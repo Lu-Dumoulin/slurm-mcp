@@ -105,6 +105,12 @@ def tail_cmd(path: str, lines: int) -> list[str]:
     return ["tail", "-n", str(int(lines)), "--", path]
 
 
+def dir_links_cmd(home: str) -> list[str]:
+    """Symlinks directly inside `home` that point to directories: prints name, then resolved target."""
+    return ["find", home, "-maxdepth", "1", "-type", "l", "-xtype", "d",
+            "-printf", "%f\\n", "-exec", "readlink", "-f", "--", "{}", ";"]
+
+
 def head_bytes_cmd(path: str, nbytes: int) -> list[str]:
     return ["head", "-c", str(int(nbytes)), "--", path]
 
