@@ -1,0 +1,25 @@
+# Copy to ~/.config/slurm-mcp/config.toml (or point SLURM_MCP_CONFIG at it).
+# Nothing here is a credential: authentication stays in your ~/.ssh setup.
+
+host = "login1.example.org"          # e.g. a Baobab login node
+user = "your_username"
+
+# Remote directories the tools may read. Every path an LLM passes in must
+# resolve inside one of these. Absolute paths only.
+remote_roots = ["/home/your_username/scratch/sims"]
+
+# Where fetch_results writes. Remote paths are mirrored below this directory.
+local_dir = "~/slurm-mcp-downloads"
+
+# Optional default parameter table for read_parameter_table.
+# df_csv = "/home/your_username/scratch/sims/DF.csv"
+
+# Optional tuning (defaults shown).
+# control_dir = "~/.ssh/slurm-mcp-cm"
+# control_persist = "10m"
+# connect_timeout = 15
+# command_timeout = 60
+# max_tail_lines = 500
+# max_list_entries = 1000
+# max_download_mb = 500
+# extra_ssh_options = []
