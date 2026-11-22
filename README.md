@@ -193,6 +193,10 @@ docs/overview.svg
 - Record real `squeue`, `sacct` and `scontrol` output from a job in the tests.
 - Optional `sbatch` options from a short whitelist, if needed.
 
+## Acknowledgements
+
+The code, tests and documentation were written by Claude (Anthropic), an AI assistant, under the author's instruction. The author chose the scope and the safety rules, directed the work step by step and tested it on the Baobab cluster.
+
 ## License
 
 MIT.
