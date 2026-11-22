@@ -1,8 +1,22 @@
 # slurm-mcp
 
-An MCP server that lets Claude (Claude Code, Claude Desktop) inspect jobs on a Slurm
-cluster over SSH. It is read-only on the cluster. Job submission and cancellation are
-planned as phase 2 and will require an explicit confirmation step.
+An MCP server that lets a coding agent inspect and, with your approval, run jobs on a Slurm
+cluster over SSH.
+
+## In 30 seconds
+
+![A coding agent on your computer talks MCP to slurm-mcp, which runs on the same computer and reaches the Slurm cluster over one shared SSH connection](docs/overview.svg)
+
+- **What it is.** A narrow, safe window onto your Slurm cluster for a coding agent. You write
+  code on your laptop or workstation, then ask things like "why did job 123 fail?" or "run
+  this on the debug preset", without pasting terminal output.
+- **Where the MCP server stands.** On your own computer, next to the agent. The agent starts
+  it and talks to it over MCP (stdio). It reaches the cluster through one shared SSH
+  connection, so nothing is installed on the cluster and no password is stored.
+- **Which agents.** Used with Claude Code and Claude Desktop. Any other MCP client that can
+  launch a local stdio server should work, but I have not tested those.
+- **Safety.** Read-only by default. Submitting or cancelling is switched off until you enable
+  it, and then needs a dry run that shows the full script, a one-time token, and your approval.
 
 I work on simulations that run on a university cluster (UNIGE Baobab) and wanted an
 assistant that can answer "did my sweep finish, and what does the log say?" without me
@@ -12,8 +26,10 @@ one shared SSH connection, and incremental downloads that compare modification t
 
 ## Status
 
-Phase 1 (read-only) is implemented and tested. Phase 2 (submit and cancel behind a
-confirmation token) is not implemented yet.
+Phase 1 (read-only tools) and phase 2 (submit and cancel behind a confirmation token) are
+implemented and covered by offline tests. Phase 1 has been run against a real cluster
+(Baobab) for the queue, accounting history and directory listing. Phase 2 has not been run
+against a real cluster yet.
 
 ## Tools
 
@@ -23,10 +39,66 @@ confirmation token) is not implemented yet.
 | `recent_jobs(days)` | Your jobs from the last 1 to 30 days (`sacct`) | nothing |
 | `job_status(job_id)` | `sacct` rows plus whitelisted `scontrol` fields | nothing |
 | `job_log(job_id, stream, lines)` | Tail of a job's stdout or stderr | nothing |
+| `diagnose_job(job_id)` | Verdict (timeout, out of memory, exit code, pending reason, memory used versus requested) plus the end of stderr and stdout | nothing |
 | `tail_file(path, lines)` | Tail of a file under a configured root | nothing |
-| `list_files(directory, max_depth, pattern)` | Path, size and mtime of remote files | nothing |
+| `list_files(directory, max_depth, pattern)` | Files and subdirectories with type, size and mtime | nothing |
 | `read_parameter_table(path)` | A CSV such as `sim/DF.csv`, as rows | nothing |
 | `fetch_results(directory, pattern, dry_run)` | Copies missing or newer files locally | local disk only |
+| `list_presets` | Presets, their defaults and caps, the GPU types on offer | nothing |
+| `submit_preset_dry_run(preset, gpu, command, ...)` | Generates a full sbatch script from a preset and returns it with a cost summary and a token | nothing |
+| `submit_job_dry_run(script_path)` | Same idea for a script that already exists on the cluster | nothing |
+| `submit_job(confirmation_token)` | Writes the reviewed script if there is one, then runs `sbatch` | submits a job |
+| `cancel_job_dry_run(job_id)` | Shows which of your own active jobs `scancel` would hit, and a token | nothing |
+| `cancel_job(confirmation_token)` | Runs the command from that dry run | cancels jobs |
+
+The job tools only exist when `enable_writes = true` is set in the config. Without it
+the server exposes only the read-only tools above (and `fetch_results`, which writes to
+local disk only).
+
+## Generated jobs and presets
+
+Typical use: you write code on your laptop with a coding agent, then ask Claude to run a
+quick test on the cluster, read why it failed, fix it and run the real job. For that,
+Claude does not write arbitrary batch files. It picks a **preset** from your config and the
+server renders the script, in the way CommonUI does.
+
+A preset fixes partition, time, CPUs, memory and, for GPU presets, the number of GPUs, and
+carries **hard caps** (`max_time`, `max_cpus`, `max_mem`, `max_gpus`). Claude may override a
+value only up to its cap. `config.example.toml` has five presets for Baobab, checked with
+read-only `sinfo`: `smoke` (15 min on `debug-cpu`, the fastest start), `debug` (30 min on
+`public-short-cpu`), `standard`, `gpu_debug` (30 min on `shared-gpu`, since Baobab has no
+debug GPU partition) and `gpu`. The GPU list, the
+partition list, the 12 h default time, the 3000 MB default memory and the `%40` array
+throttle are taken from the CommonUI notebook. CommonUI preselects A100-40Gb and H100; the
+example preselects all three types, see the availability check below.
+
+- **GPU is never assumed.** `gpu` is a required parameter with no default, and the tool
+  description tells Claude to ask you if you have not said. If you want a GPU, Claude asks
+  which type from your configured list (`list_presets` returns it). The dry run echoes the
+  choice, for example `GPU: yes, 1 x A100-40Gb|H100`.
+- **GPU availability is checked.** The dry run asks `sinfo` (read-only) which node features
+  each chosen partition has. A partition list such as `private-kruse-gpu,shared-gpu` with an
+  OR constraint is fine when only some partitions have every type: Slurm uses whichever
+  partition has a matching node, and the dry run lists a warning such as "A100-80Gb is not
+  available on private-kruse-gpu". If no chosen partition has any chosen type, the job could
+  never start, so the dry run refuses with an error.
+- **The command is free-form but quoted.** It is a list of arguments, for example
+  `["julia", "--optimize=3", "main.jl"]`, written as one quoted `srun` line, never passed
+  through a shell string. `{task_id}` inside an argument becomes the array task id.
+- **Everything else is validated.** Job name, partition, time, memory, array spec, module
+  names and GPU types must match strict patterns or the config's lists, so nothing can add an
+  `#SBATCH` line or a second command. Arrays are limited to `max_array_size` tasks and always
+  get a `%N` concurrency limit.
+- **You review the whole script.** The dry run returns the full script text, its SHA-256, a
+  cost summary (tasks, CPUs, time, memory, partition, GPU) and the sbatch command. The token
+  is tied to that exact script: `submit_job` writes those bytes to `jobs_dir` and runs sbatch
+  on them, and nothing else.
+
+Honest limit: a job that runs your code is code running on the cluster, whatever the
+wrapper. The controls are that you see the full script before approving, the resource
+caps, the confinement of the working directory to your roots, and the client's approval
+prompt on `submit_job`. Getting code onto the cluster is not handled by this server yet
+(use git or rsync).
 
 ## Safety model
 
@@ -44,7 +116,25 @@ confirmation token) is not implemented yet.
   remote path, writes to a `.part` file first, and refuses a download above
   `max_download_mb`. Use `dry_run=true` to preview.
 - **Tool annotations.** Every tool declares `readOnlyHint`; clients that honour it can
-  skip confirmation prompts for the read-only ones.
+  skip confirmation prompts for the read-only ones. `submit_job` and `cancel_job` are not
+  read-only, and `cancel_job` is marked destructive, so a client asks you before running them.
+- **Writes are off by default.** Submit and cancel are not even registered unless
+  `enable_writes = true`. The cluster-facing code refuses them as well, in case a client
+  calls a tool that was not listed.
+- **Two steps with a token.** A dry run validates the request, stores the exact remote
+  command and returns a random single-use token that expires (default 5 minutes). The real
+  call takes only the token, not the parameters, so what runs is exactly what was shown.
+  Tokens live in memory, so restarting the server invalidates them.
+- **Narrow write scope.** Submission is `sbatch --parsable` of one existing regular file
+  inside a configured root, run from that file's directory, with no extra options.
+  Cancellation is `scancel` of a validated job id, and only if that job is in your own
+  `squeue --me` listing. Cancelling a plain id cancels a whole job array; use `123_4` for
+  one task. There is no way to pass any other command.
+- **What the token does not prove.** It guarantees that the command executed equals the one
+  reviewed. It does not prove that a person approved it: a model could call both steps in a
+  row. The human check is your client's approval prompt on `submit_job` and `cancel_job`,
+  so keep that prompt on (do not set those tools to always-allow). The submitted script
+  itself is not inspected beyond a preview of its first 2000 bytes.
 - **No credentials in the repo or the config.** Authentication is your normal `~/.ssh`
   setup. The server runs `ssh` with `BatchMode=yes`, so it can never sit on a password
   prompt.
@@ -79,7 +169,10 @@ slurm-mcp init          # or copy config.example.toml to ~/.config/slurm-mcp/con
 ```
 
 The config location can also be set with `SLURM_MCP_CONFIG` or `--config`. Nothing
-cluster-specific is hard-coded.
+cluster-specific is hard-coded. Two optional switches, both in `config.example.toml`:
+
+- `enable_writes = false` (default). Set it to `true` to expose submit and cancel.
+- `auto_connect = true` (default). See the next section.
 
 ### Claude Code
 
@@ -109,8 +202,9 @@ connection (`ControlPersist`, default 10 minutes). Open it once in a terminal, w
 also where a password or second factor is entered.
 
 Run it in a normal terminal on your own computer (Terminal or iTerm on macOS), not
-inside Claude and not on the cluster. The virtual environment must be active, or use
-the full path `/path/to/slurm-mcp/.venv/bin/slurm-mcp login`:
+inside Claude and not on the cluster, from any folder. `./install.sh` links the command
+into `~/.local/bin`, which must be on your `PATH` (the script tells you if it is not). Without
+that link, use the full path `/path/to/slurm-mcp/.venv/bin/slurm-mcp login`:
 
 ```bash
 slurm-mcp login
@@ -119,9 +213,37 @@ slurm-mcp login
 It asks for your password or key passphrase, then returns the prompt while the
 connection stays open in the background.
 
-`slurm-mcp check` reports whether the shared connection is alive. If it has expired, tools
-return a message telling the model to ask you to run `slurm-mcp login`. This is macOS and
+`slurm-mcp check` reports whether the shared connection is alive.
+
+**Automatic connection.** With `auto_connect = true` (the default) a tool call that finds no
+open connection tries to open one by itself, without any prompt. This works when your key is
+available non-interactively (an unlocked key, `ssh-agent`, or the macOS keychain with
+`UseKeychain yes`). If a passphrase, password or second factor is needed, the call fails with
+a message telling you to run `slurm-mcp login`, which the model cannot do for you. With
+`auto_connect = false` the server only ever uses a connection you opened yourself. This is macOS and
 Linux only, since Windows OpenSSH does not support multiplexing.
+
+## Check that everything works
+
+```bash
+slurm-mcp doctor
+```
+
+reads only. It checks the config, the SSH connection (without a prompt), `squeue`, that each
+root exists, that every preset's partition exists, that the chosen GPU types exist on the
+GPU presets' partitions, and where generated scripts will go. Each line is `OK`, `WARN` or
+`FAIL` with the reason.
+
+```bash
+slurm-mcp doctor --smoke
+```
+
+also runs a real test job. It generates the `smoke` preset script (15 minutes on
+`debug-cpu`, command `hostname; date; echo smoke-ok`), prints it in full, and asks you to type
+`y` before it submits anything. It then follows the job until it finishes, prints the
+diagnosis and the program output, and reports pass or fail. Use `--preset debug` to test
+another preset. If the job is still queued after 5 minutes it stops waiting and tells you
+the job id; the job stays in the queue.
 
 ## Example session
 
@@ -167,7 +289,12 @@ src/slurm_mcp/
   commands.py  pure ssh/scp argument vectors and fixed remote commands
   parsing.py   pure parsers for squeue, sacct, scontrol, find
   sync.py      pure incremental download planning
-  cluster.py   read-only operations
+  presets.py   presets, caps and unit parsing
+  jobscript.py pure sbatch script generation
+  diagnose.py  pure reading of job accounting data
+  doctor.py    setup check and optional smoke test (slurm-mcp doctor)
+  confirm.py   single-use confirmation tokens for writes
+  cluster.py   cluster operations (read-only, plus submit and cancel when enabled)
   server.py    MCP tool definitions
   setup.py     interactive config creation (init)
   __main__.py  serve, login, check, init
@@ -176,10 +303,11 @@ tests/
 
 ## Roadmap
 
-- Phase 2: `submit_dry_run` returns the exact `sbatch` command and a short-lived token;
-  `submit` runs only with that token. `cancel` follows the same pattern. Only existing
-  scripts under a root can be submitted.
-- Compare live output formats on Baobab and record them in the tests.
+- Run submit and cancel once against a real cluster with a trivial test script.
+- Upload of code files with the same dry run and token pattern.
+- One array task per row of a parameter table such as `DF.csv`, as in CommonUI.
+- Record real `squeue`, `sacct` and `scontrol` output from a job in the tests.
+- Optional `sbatch` options (partition, time) from a short whitelist, if needed.
 
 ## License
 

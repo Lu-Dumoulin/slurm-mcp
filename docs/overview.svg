@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 400" width="960" height="400" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>slurm-mcp overview</title>
+  <desc>A coding agent on your computer talks MCP to the slurm-mcp server, which also runs on your computer. The server reaches the Slurm cluster over one shared SSH connection. Nothing is installed on the cluster.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#374151"/>
+    </marker>
+  </defs>
+  <rect width="960" height="400" rx="14" fill="#ffffff" stroke="#d1d5db"/>
+
+  <!-- zone: your computer -->
+  <rect x="24" y="24" width="548" height="272" rx="12" fill="#f3f4f6" stroke="#9ca3af" stroke-dasharray="6 4"/>
+  <text x="40" y="50" font-size="15" font-weight="700" fill="#111827">YOUR COMPUTER</text>
+  <text x="40" y="68" font-size="12" fill="#4b5563">code is written here; the server runs here too</text>
+
+  <!-- coding agent -->
+  <rect x="40" y="90" width="200" height="180" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="140" y="118" font-size="15" font-weight="700" fill="#1d4ed8" text-anchor="middle">Coding agent</text>
+  <text x="140" y="136" font-size="12" fill="#4b5563" text-anchor="middle">(an MCP client)</text>
+  <text x="140" y="168" font-size="13" fill="#111827" text-anchor="middle">Claude Code</text>
+  <text x="140" y="188" font-size="13" fill="#111827" text-anchor="middle">Claude Desktop</text>
+  <text x="140" y="208" font-size="12" fill="#6b7280" text-anchor="middle">other clients that start</text>
+  <text x="140" y="224" font-size="12" fill="#6b7280" text-anchor="middle">a local MCP server</text>
+  <text x="140" y="256" font-size="12" font-style="italic" fill="#374151" text-anchor="middle">"why did job 123 fail?"</text>
+
+  <!-- arrow agent -> server -->
+  <line x1="242" y1="180" x2="318" y2="180" stroke="#374151" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="280" y="168" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">MCP</text>
+  <text x="280" y="204" font-size="11" fill="#6b7280" text-anchor="middle">stdio</text>
+
+  <!-- server -->
+  <rect x="320" y="90" width="236" height="180" rx="10" fill="#ffffff" stroke="#059669" stroke-width="3"/>
+  <text x="438" y="118" font-size="15" font-weight="700" fill="#047857" text-anchor="middle">slurm-mcp</text>
+  <text x="438" y="136" font-size="12" fill="#4b5563" text-anchor="middle">this repository</text>
+  <text x="438" y="164" font-size="12" fill="#111827" text-anchor="middle">queue, status, logs, diagnose</text>
+  <text x="438" y="184" font-size="12" fill="#111827" text-anchor="middle">list and fetch results</text>
+  <text x="438" y="204" font-size="12" fill="#111827" text-anchor="middle">presets: smoke, debug, gpu ...</text>
+  <text x="438" y="224" font-size="12" fill="#111827" text-anchor="middle">submit, cancel (opt-in)</text>
+  <text x="438" y="254" font-size="11" fill="#6b7280" text-anchor="middle">fixed commands, paths confined</text>
+
+  <!-- arrow server -> cluster -->
+  <line x1="558" y1="180" x2="652" y2="180" stroke="#374151" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="605" y="160" font-size="12" font-weight="700" fill="#374151" text-anchor="middle">SSH</text>
+  <text x="605" y="205" font-size="11" fill="#6b7280" text-anchor="middle">one shared</text>
+  <text x="605" y="219" font-size="11" fill="#6b7280" text-anchor="middle">connection</text>
+
+  <!-- zone: cluster -->
+  <rect x="654" y="24" width="282" height="272" rx="12" fill="#fff7ed" stroke="#fb923c"/>
+  <text x="670" y="50" font-size="15" font-weight="700" fill="#9a3412">SLURM CLUSTER</text>
+  <text x="670" y="68" font-size="12" fill="#7c2d12">for example Baobab; nothing installed</text>
+  <rect x="670" y="90" width="250" height="84" rx="8" fill="#ffffff" stroke="#fb923c"/>
+  <text x="795" y="116" font-size="13" font-weight="700" fill="#9a3412" text-anchor="middle">login node</text>
+  <text x="795" y="138" font-size="12" fill="#111827" text-anchor="middle">squeue  sacct  scontrol  sinfo</text>
+  <text x="795" y="158" font-size="12" fill="#111827" text-anchor="middle">sbatch  scancel  (when enabled)</text>
+  <line x1="795" y1="176" x2="795" y2="196" stroke="#9a3412" stroke-width="2" marker-end="url(#arrow)"/>
+  <rect x="670" y="198" width="250" height="74" rx="8" fill="#ffffff" stroke="#fb923c"/>
+  <text x="795" y="224" font-size="13" font-weight="700" fill="#9a3412" text-anchor="middle">compute nodes</text>
+  <text x="795" y="246" font-size="12" fill="#111827" text-anchor="middle">your jobs run here (CPU, GPU)</text>
+  <text x="795" y="262" font-size="11" fill="#6b7280" text-anchor="middle">results and logs on shared storage</text>
+
+  <!-- safety strip -->
+  <rect x="24" y="314" width="912" height="62" rx="10" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="44" y="340" font-size="13" font-weight="700" fill="#065f46">Read-only by default.</text>
+  <text x="212" y="340" font-size="13" fill="#064e3b">Looking at jobs and results changes nothing on the cluster.</text>
+  <text x="44" y="362" font-size="13" font-weight="700" fill="#92400e">Writes are opt-in.</text>
+  <text x="212" y="362" font-size="13" fill="#78350f">Submitting needs a dry run that shows the full script, a one-time token, and your approval.</text>
+</svg>

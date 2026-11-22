@@ -21,6 +21,7 @@ class FakeRunner:
         self.ssh_replies = ssh_replies or {}
         self.remote_files = remote_files or {}
         self.calls: list[list[str]] = []
+        self.uploads: dict[str, str] = {}   # remote path -> text of the uploaded file
 
     def run(self, argv: Sequence[str], timeout: float) -> Result:
         argv = list(argv)
@@ -34,6 +35,9 @@ class FakeRunner:
         return Result(tuple(argv), 1, "", f"no scripted reply for: {remote}")
 
     def _scp(self, argv: list[str]) -> Result:
+        if "@" in argv[-1] and ":" in argv[-1]:  # upload: local file, then user@host:path
+            self.uploads[argv[-1].split(":", 1)[1]] = Path(argv[-2]).read_text()
+            return Result(tuple(argv), 0)
         remote_path = argv[-2].split(":", 1)[1]
         local = Path(argv[-1])
         if remote_path not in self.remote_files:

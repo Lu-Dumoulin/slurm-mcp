@@ -56,15 +56,25 @@ def parse_dir_links(text: str) -> list[tuple[str, str]]:
     return pairs
 
 
+def parse_partition_features(text: str) -> dict[str, set[str]]:
+    """`sinfo -o '%P|%f'` output to {partition: all node features seen in it}."""
+    out: dict[str, set[str]] = {}
+    for line in text.splitlines():
+        name, sep, feats = line.partition(FIELD_SEP)
+        if sep:
+            out.setdefault(name.strip().rstrip("*"), set()).update(f for f in feats.strip().split(",") if f)
+    return out
+
+
 def parse_find(text: str) -> list[RemoteFile]:
     files = []
     for line in text.splitlines():
         parts = line.split("\t")
-        if len(parts) != 3:
+        if len(parts) != 4 or parts[0] not in ("f", "d"):
             continue
-        rel, size, mtime = parts
+        kind, rel, size, mtime = parts
         try:
-            files.append(RemoteFile(rel, int(size), float(mtime)))
+            files.append(RemoteFile(rel, int(size), float(mtime), kind))
         except ValueError:
             continue
     return files

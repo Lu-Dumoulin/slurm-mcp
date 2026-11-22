@@ -86,10 +86,10 @@ def test_ssh_failure_message_points_to_login(cfg):
 def test_list_files_filters_and_truncates(tmp_path):
     from fakes import make_config
     cfg = make_config(tmp_path, max_list_entries=2)
-    listing = "a.csv\t5\t100.0\nb.csv\t6\t101.0\nc.csv\t7\t102.0\nd.txt\t1\t1.0\n"
+    listing = "f\ta.csv\t5\t100.0\nf\tb.csv\t6\t101.0\nf\tc.csv\t7\t102.0\nf\td.txt\t1\t1.0\nd\tsub.csv\t4096\t3.0\n"
     c = cluster(cfg, ssh_replies={"find": (listing, 0)})
     out = c.list_files("/scratch/alice/run", pattern="*.csv")
-    assert out["count"] == 3 and out["truncated"] and len(out["files"]) == 2
+    assert out["count"] == 4 and out["truncated"] and len(out["files"]) == 2
 
 
 def test_read_parameter_table(cfg):
@@ -101,7 +101,7 @@ def test_read_parameter_table(cfg):
         c.read_parameter_table()
 
 
-LISTING = "r/a.csv\t3\t1700000000.0\nr/b.csv\t4\t1700000100.0\nr/bad name.csv\t1\t1.0\n"
+LISTING = "f\tr/a.csv\t3\t1700000000.0\nf\tr/b.csv\t4\t1700000100.0\nf\tr/bad name.csv\t1\t1.0\nd\tr\t4096\t1.0\n"
 REMOTE = {"/scratch/alice/run/r/a.csv": (b"aaa", 1700000000.0),
           "/scratch/alice/run/r/b.csv": (b"bbbb", 1700000100.0)}
 
@@ -124,7 +124,7 @@ def test_fetch_is_incremental(cfg):
 def test_fetch_picks_up_only_changed_file(cfg):
     c = cluster(cfg, ssh_replies={"find": (LISTING, 0)}, remote_files=REMOTE)
     c.fetch_results("/scratch/alice/run")
-    c.runner.ssh_replies["find"] = (LISTING.replace("4\t1700000100.0", "6\t1700000500.0"), 0)
+    c.runner.ssh_replies["find"] = (LISTING.replace("r/b.csv\t4\t1700000100.0", "r/b.csv\t6\t1700000500.0"), 0)
     c.runner.remote_files["/scratch/alice/run/r/b.csv"] = (b"bbbbbb", 1700000500.0)
     again = c.fetch_results("/scratch/alice/run")
     assert again["downloaded"] == ["r/b.csv"]
@@ -141,7 +141,7 @@ def test_fetch_dry_run_writes_nothing(cfg):
 def test_fetch_size_cap(tmp_path):
     from fakes import make_config
     cfg = make_config(tmp_path, max_download_mb=1)
-    c = cluster(cfg, ssh_replies={"find": (f"big.bin\t{2*1024*1024}\t1.0\n", 0)})
+    c = cluster(cfg, ssh_replies={"find": (f"f\tbig.bin\t{2*1024*1024}\t1.0\n", 0)})
     with pytest.raises(SlurmMcpError, match="refusing"):
         c.fetch_results("/scratch/alice/run")
 
@@ -151,3 +151,38 @@ def test_fetch_failed_file_leaves_no_partial(cfg):
     out = c.fetch_results("/scratch/alice/run")
     assert out["downloaded"] == ["r/a.csv"] and out["failed"][0]["path"] == "r/b.csv"
     assert not list(cfg.local_dir.rglob("*.part"))
+
+
+def test_list_files_reports_directories(cfg):
+    c = cluster(cfg, ssh_replies={"find": ("d\tsim1\t4096\t5.0\nd\tsim2\t4096\t6.0\n", 0)})
+    out = c.list_files("/scratch/alice")
+    assert [(e["path"], e["type"]) for e in out["files"]] == [("sim1", "dir"), ("sim2", "dir")]
+    assert all("size" not in e for e in out["files"])
+
+
+def test_auto_connect_default_opens_connection_in_the_same_call(cfg):
+    c = cluster(cfg, ssh_replies={"squeue": ("", 0)})
+    c.queue()
+    assert not any("-O" in call for call in c.runner.calls)  # no separate check, ControlMaster=auto does it
+
+
+def test_auto_connect_off_never_logs_in_on_its_own(tmp_path):
+    from fakes import make_config
+    cfg = make_config(tmp_path, auto_connect=False)
+    c = cluster(cfg, ssh_replies={"squeue": ("", 0)})
+    with pytest.raises(RemoteError, match="auto_connect is off"):
+        c.queue()
+    assert not any(call[-1] == "squeue --me" or "squeue" in call[-1] for call in c.runner.calls)
+    c.runner.ssh_replies["alice@login"] = ("", 0)  # the `ssh -O check` call now succeeds
+    c.queue()
+
+
+def test_permission_denied_suggests_ssh_add(cfg):
+    from slurm_mcp.runner import Result
+
+    class Denied(FakeRunner):
+        def run(self, argv, timeout):
+            return Result(tuple(argv), 255, "", "Permission denied (publickey).")
+
+    with pytest.raises(RemoteError, match="ssh-add"):
+        Cluster(cfg, Denied()).queue()

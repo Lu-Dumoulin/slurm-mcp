@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 import re
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import ConfigError, PathError
-from .paths import normalize_root
+from .paths import normalize_root, validate_remote_path
+from .presets import Preset, parse_gpu_table
 
 _NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 DEFAULT_CONFIG_PATH = Path("~/.config/slurm-mcp/config.toml")
@@ -32,6 +33,18 @@ class Config:
     max_list_entries: int = 1000
     max_download_mb: int = 500
     extra_ssh_options: tuple[str, ...] = ()
+    auto_connect: bool = True       # open the shared SSH connection non-interactively when needed
+    enable_writes: bool = False     # expose submit/cancel tools (off by default)
+    confirmation_ttl_s: int = 300   # lifetime of a confirmation token
+    jobs_dir: str | None = None     # where generated scripts are written (default: first root + /slurm-mcp-jobs)
+    max_array_size: int = 100
+    array_concurrency: int = 40     # the %N throttle added to every array
+    gpu_types: dict[str, str] = field(default_factory=dict)   # display name -> Slurm feature
+    presets: dict[str, Preset] = field(default_factory=dict)
+
+    @property
+    def scripts_dir(self) -> str:
+        return self.jobs_dir or f"{self.remote_roots[0].rstrip('/')}/slurm-mcp-jobs"
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Config:
@@ -45,6 +58,9 @@ class Config:
         for key in ("host", "user"):
             if not isinstance(data[key], str) or not _NAME_RE.fullmatch(data[key]):
                 raise ConfigError(f"invalid {key}: {data[key]!r}")
+        for key in ("auto_connect", "enable_writes"):
+            if key in data and not isinstance(data[key], bool):
+                raise ConfigError(f"{key} must be true or false")
         roots = data["remote_roots"]
         if not isinstance(roots, list) or not roots:
             raise ConfigError("remote_roots must be a non-empty list")
@@ -54,6 +70,17 @@ class Config:
         except PathError as exc:
             raise ConfigError(f"invalid remote_roots entry: {exc}") from None
         kwargs["local_dir"] = Path(data["local_dir"]).expanduser()
+        gpu_table = parse_gpu_table(data.get("gpu_types", {}))
+        kwargs["gpu_types"] = gpu_table
+        presets = data.get("presets", {})
+        if not isinstance(presets, dict):
+            raise ConfigError("presets must be a table of tables")
+        kwargs["presets"] = {n: Preset.from_dict(n, d, gpu_table) for n, d in presets.items()}
+        if "jobs_dir" in data:
+            try:
+                kwargs["jobs_dir"] = validate_remote_path(data["jobs_dir"], kwargs["remote_roots"])
+            except PathError as exc:
+                raise ConfigError(f"jobs_dir: {exc}") from None
         if "control_dir" in data:
             kwargs["control_dir"] = Path(data["control_dir"]).expanduser()
         if "extra_ssh_options" in data:

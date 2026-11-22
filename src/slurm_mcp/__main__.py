@@ -1,4 +1,4 @@
-"""Entry point: `slurm-mcp` (serve over stdio), `slurm-mcp login`, `slurm-mcp check`, `slurm-mcp init`."""
+"""Entry point: `slurm-mcp` serves over stdio; also `login`, `check`, `init` and `doctor`."""
 
 from __future__ import annotations
 
@@ -16,8 +16,10 @@ from .server import build_server
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="slurm-mcp", description=__doc__)
-    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "login", "check", "init"])
+    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "login", "check", "init", "doctor"])
     parser.add_argument("--config", help="path to config.toml (default: $SLURM_MCP_CONFIG or ~/.config/slurm-mcp/config.toml)")
+    parser.add_argument("--smoke", action="store_true", help="doctor: also submit a tiny test job (asks first)")
+    parser.add_argument("--preset", default="smoke", help="doctor --smoke: preset to use (default: smoke)")
     args = parser.parse_args(argv)
     if args.command == "init":
         from pathlib import Path
@@ -32,6 +34,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
+    if args.command == "doctor":
+        from .doctor import run_doctor
+
+        return run_doctor(cfg, SubprocessRunner(), smoke=args.smoke, preset=args.preset)
     if args.command == "login":
         return subprocess.call(commands.login_argv(cfg))
     if args.command == "check":

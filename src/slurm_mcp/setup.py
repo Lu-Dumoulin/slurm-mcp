@@ -122,7 +122,7 @@ def run_init(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(render_toml(data))
     out(f"\nWrote {path}")
-    out("Next: run `slurm-mcp login` in a terminal, then register the server with your client (see README).")
+    out(f"Next: run `{commands.cli_name()} login` in a terminal, then register the server with your client (see README).")
     return path
 
 

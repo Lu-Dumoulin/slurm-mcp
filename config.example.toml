@@ -23,3 +23,80 @@ local_dir = "~/slurm-mcp-downloads"
 # max_list_entries = 1000
 # max_download_mb = 500
 # extra_ssh_options = []
+
+# Open the shared SSH connection by itself when a key is available (default true).
+# auto_connect = true
+
+# Expose submit_job and cancel_job (default false). Each needs a dry run and a token.
+# enable_writes = false
+# confirmation_ttl_s = 300
+
+# --- Job presets (only used when enable_writes = true) --------------------------------
+# Example values for UNIGE Baobab, checked with read-only `sinfo`. The GPU types, the
+# partition list, the 12 h default time and the 3000 MB default memory are the ones in the
+# CommonUI notebook. CommonUI preselects A100-40Gb and H100; here all three types are
+# preselected, which is safe because a dry run checks with `sinfo` that the chosen types
+# exist on the chosen partitions (A100-80Gb is only on shared-gpu, and the job simply runs
+# there). "private-kruse-gpu" is one group's partition: replace it with yours.
+# The max_* keys are hard caps.
+max_array_size = 100
+array_concurrency = 40            # every array gets %40, as in CommonUI
+# jobs_dir = "/home/your_username/scratch/sims/slurm-mcp-jobs"   # generated scripts go here
+
+[gpu_types]                       # name shown to the user = Slurm node feature
+"H100" = "nvidia_h100_nvl"
+"A100-40Gb" = "nvidia_a100-pcie-40gb"
+"A100-80Gb" = "nvidia_a100_80gb_pcie"
+
+[presets.smoke]                   # fastest start, debug-cpu is capped at 15 minutes
+description = "15 minute CPU smoke test"
+partition = "debug-cpu"
+time = "00:15:00"
+cpus = 1
+mem = "2G"
+max_cpus = 4
+max_mem = "8G"
+
+[presets.debug]
+description = "30 minute CPU debug run"
+partition = "public-short-cpu"    # 1 hour limit
+time = "00:30:00"
+cpus = 2
+mem = "4G"
+max_time = "01:00:00"
+max_cpus = 4
+max_mem = "8G"
+
+[presets.standard]
+description = "CPU production run"
+partition = "public-cpu"          # 4 day limit
+time = "0-12:00:00"
+cpus = 4
+mem = "8G"
+max_time = "2-00:00:00"
+max_cpus = 20
+max_mem = "80G"
+
+[presets.gpu_debug]               # Baobab has no debug GPU partition: shared-gpu is the shortest
+description = "30 minute GPU debug run"
+gpu = true
+partition = "shared-gpu"          # 12 hour limit
+time = "00:30:00"
+mem = "3000"                      # MB, the CommonUI default
+gpus = 1
+max_gpus = 1
+gpu_types = ["H100", "A100-40Gb", "A100-80Gb"]  # all three, see the note on gpu
+max_time = "02:00:00"
+max_mem = "32G"
+
+[presets.gpu]
+description = "GPU production run (CommonUI defaults)"
+gpu = true
+partition = "private-kruse-gpu,shared-gpu"
+time = "0-12:00:00"
+mem = "3000"
+gpus = 1
+max_gpus = 2
+gpu_types = ["H100", "A100-40Gb", "A100-80Gb"]  # all three: A100-80Gb only exists on shared-gpu, which is fine
+max_time = "2-00:00:00"
+max_mem = "64G"

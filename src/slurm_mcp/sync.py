@@ -21,6 +21,7 @@ class RemoteFile:
     rel: str
     size: int
     mtime: float
+    kind: str = "f"  # "f" file, "d" directory
 
 
 @dataclass(frozen=True)

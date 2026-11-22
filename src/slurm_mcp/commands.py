@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import re
 import shlex
+import shutil
+import sys
+from pathlib import Path
 from collections.abc import Sequence
 
 from .config import Config
@@ -31,6 +34,13 @@ SCONTROL_KEYS = (
     "StartTime", "EndTime", "Partition", "NodeList", "NumCPUs", "WorkDir", "Command",
     "StdOut", "StdErr", "ExitCode",
 )
+
+
+def cli_name() -> str:
+    """How to invoke this tool in messages: the bare name if it is on PATH, else the full path."""
+    if shutil.which("slurm-mcp"):
+        return "slurm-mcp"
+    return str(Path(sys.executable).parent / "slurm-mcp")
 
 
 def validate_job_id(job_id: str) -> str:
@@ -72,6 +82,10 @@ def scp_download_argv(cfg: Config, remote_path: str, local_path: str) -> list[st
     return ["scp", "-q", *ssh_options(cfg), "--", f"{target(cfg)}:{remote_path}", local_path]
 
 
+def scp_upload_argv(cfg: Config, local_path: str, remote_path: str) -> list[str]:
+    return ["scp", "-q", *ssh_options(cfg), "--", local_path, f"{target(cfg)}:{remote_path}"]
+
+
 def login_argv(cfg: Config) -> list[str]:
     """Interactive: opens the master connection in the background after authentication."""
     return ["ssh", *ssh_options(cfg, batch=False), "-fN", target(cfg)]
@@ -111,10 +125,38 @@ def dir_links_cmd(home: str) -> list[str]:
             "-printf", "%f\\n", "-exec", "readlink", "-f", "--", "{}", ";"]
 
 
+def partition_features_cmd(partition: str) -> list[str]:
+    """Node features per partition, read-only. `partition` is validated by the preset pattern."""
+    return ["sinfo", "-h", "-p", partition, "-o", f"%P{FIELD_SEP}%f"]
+
+
+def test_file_cmd(path: str) -> list[str]:
+    return ["test", "-f", path]
+
+
+def sbatch_cmd(script_path: str, chdir: str | None = None) -> list[str]:
+    """sbatch of one script, run from `chdir` (default: the script's own directory)."""
+    directory = chdir or script_path.rsplit("/", 1)[0] or "/"
+    return ["sbatch", "--parsable", f"--chdir={directory}", script_path]
+
+
+def scancel_cmd(job_id: str) -> list[str]:
+    return ["scancel", validate_job_id(job_id)]
+
+
+def test_dir_cmd(path: str) -> list[str]:
+    return ["test", "-d", path]
+
+
+def mkdir_cmd(path: str) -> list[str]:
+    return ["mkdir", "-p", "--", path]
+
+
 def head_bytes_cmd(path: str, nbytes: int) -> list[str]:
     return ["head", "-c", str(int(nbytes)), "--", path]
 
 
 def find_cmd(directory: str, max_depth: int) -> list[str]:
-    return ["find", directory, "-maxdepth", str(int(max_depth)), "-type", "f",
-            "-printf", "%P\\t%s\\t%T@\\n"]
+    """Files and directories below `directory`, one `type<TAB>path<TAB>size<TAB>mtime` line each."""
+    return ["find", directory, "-mindepth", "1", "-maxdepth", str(int(max_depth)),
+            "(", "-type", "f", "-o", "-type", "d", ")", "-printf", "%y\\t%P\\t%s\\t%T@\\n"]

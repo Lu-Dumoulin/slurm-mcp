@@ -42,3 +42,9 @@ def test_scp_uses_double_dash(cfg):
 def test_dir_links_cmd_is_quoted_for_the_remote_shell(cfg):
     line = c.ssh_argv(cfg, c.dir_links_cmd("/home/alice"))[-1]
     assert line == "find /home/alice -maxdepth 1 -type l -xtype d -printf '%f\\n' -exec readlink -f -- '{}' ';'"
+
+
+def test_find_cmd_lists_files_and_dirs(cfg):
+    line = c.ssh_argv(cfg, c.find_cmd("/scratch/alice", 2))[-1]
+    assert line == ("find /scratch/alice -mindepth 1 -maxdepth 2 '(' -type f -o -type d ')' "
+                    "-printf '%y\\t%P\\t%s\\t%T@\\n'")

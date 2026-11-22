@@ -30,8 +30,9 @@ def test_scontrol_oneline():
 
 
 def test_find_skips_bad_lines():
-    files = parse_find("a.csv\t10\t1700000000.5\nbroken line\nb/c.txt\tNaN\t1\nd\t3\t5.0\n")
-    assert [(f.rel, f.size, f.mtime) for f in files] == [("a.csv", 10, 1700000000.5), ("d", 3, 5.0)]
+    files = parse_find("f\ta.csv\t10\t1700000000.5\nbroken line\nf\tb/c.txt\tNaN\t1\nd\tsub\t4096\t5.0\nx\tweird\t1\t1\n")
+    assert [(f.kind, f.rel, f.size, f.mtime) for f in files] == [
+        ("f", "a.csv", 10, 1700000000.5), ("d", "sub", 4096, 5.0)]
 
 
 def test_parse_dir_links():
@@ -40,3 +41,10 @@ def test_parse_dir_links():
     text = "scratch\n/srv/beegfs/scratch/users/b/bob\nweird name\n/srv/x\nevil\n/srv/../etc\nodd\n/srv/a b\n"
     assert parse_dir_links(text) == [("scratch", "/srv/beegfs/scratch/users/b/bob")]
     assert parse_dir_links("") == []
+
+
+def test_parse_partition_features():
+    from slurm_mcp.parsing import parse_partition_features
+
+    text = "shared-gpu*|a,b\nshared-gpu*|c\nprivate|x\nbroken\n"
+    assert parse_partition_features(text) == {"shared-gpu": {"a", "b", "c"}, "private": {"x"}}
