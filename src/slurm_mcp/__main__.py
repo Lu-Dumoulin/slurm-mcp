@@ -1,4 +1,4 @@
-"""Entry point: `slurm-mcp` (serve over stdio), `slurm-mcp login`, `slurm-mcp check`."""
+"""Entry point: `slurm-mcp` (serve over stdio), `slurm-mcp login`, `slurm-mcp check`, `slurm-mcp init`."""
 
 from __future__ import annotations
 
@@ -16,9 +16,15 @@ from .server import build_server
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="slurm-mcp", description=__doc__)
-    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "login", "check"])
+    parser.add_argument("command", nargs="?", default="serve", choices=["serve", "login", "check", "init"])
     parser.add_argument("--config", help="path to config.toml (default: $SLURM_MCP_CONFIG or ~/.config/slurm-mcp/config.toml)")
     args = parser.parse_args(argv)
+    if args.command == "init":
+        from pathlib import Path
+        from .setup import run_init
+
+        run_init(Path(args.config) if args.config else None)
+        return 0
     try:
         cfg = load_config(args.config)
     except SlurmMcpError as exc:

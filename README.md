@@ -7,7 +7,7 @@ planned as phase 2 and will require an explicit confirmation step.
 I work on simulations that run on a university cluster (UNIGE Baobab) and wanted an
 assistant that can answer "did my sweep finish, and what does the log say?" without me
 pasting terminal output. The design follows the SSH layer of
-CommonUI, a Julia tool I use to run and download parameter sweeps:
+[CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool I use to run and download parameter sweeps:
 one shared SSH connection, and incremental downloads that compare modification times.
 
 ## Status
@@ -53,31 +53,49 @@ confirmation token) is not implemented yet.
 
 Clusters often throttle logins. All calls go through one OpenSSH `ControlMaster`
 connection (`ControlPersist`, default 10 minutes). Open it once in a terminal, which is
-also where a password or second factor is entered:
+also where a password or second factor is entered.
+
+Run it in a normal terminal on your own computer (Terminal or iTerm on macOS), not
+inside Claude and not on the cluster. The virtual environment must be active, or use
+the full path `/path/to/slurm-mcp/.venv/bin/slurm-mcp login`:
 
 ```bash
 slurm-mcp login
 ```
 
+It asks for your password or key passphrase, then returns the prompt while the
+connection stays open in the background.
+
 `slurm-mcp check` reports whether the shared connection is alive. If it has expired, tools
 return a message telling the model to ask you to run `slurm-mcp login`. This is macOS and
 Linux only, since Windows OpenSSH does not support multiplexing.
 
-## Install
-
-```bash
-git clone <this repository> && cd slurm-mcp
-python -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
-```
+## Install and configure
 
 Python 3.11 or newer. The SDK is `mcp` 2.x (`MCPServer`, which replaced `FastMCP`).
 
-## Configure
+On macOS or Linux, from the folder where you cloned the repository:
 
-Copy `config.example.toml` to `~/.config/slurm-mcp/config.toml` (or set
-`SLURM_MCP_CONFIG`) and fill in host, user and roots. Nothing cluster-specific is
-hard-coded.
+```bash
+./install.sh
+```
+
+This creates a virtual environment, installs the package, and runs `slurm-mcp init`,
+which asks for the login host, your username, the remote directories the tools may read
+(`remote_roots`), the local download folder (`local_dir`) and an optional default
+parameter table. It validates the answers and writes `~/.config/slurm-mcp/config.toml`.
+It never overwrites an existing config without asking. On Windows use `install.bat`.
+
+By hand instead:
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -e ".[dev]"
+slurm-mcp init          # or copy config.example.toml to ~/.config/slurm-mcp/config.toml
+```
+
+The config location can also be set with `SLURM_MCP_CONFIG` or `--config`. Nothing
+cluster-specific is hard-coded.
 
 ### Claude Code
 
@@ -146,7 +164,8 @@ src/slurm_mcp/
   sync.py      pure incremental download planning
   cluster.py   read-only operations
   server.py    MCP tool definitions
-  __main__.py  serve, login, check
+  setup.py     interactive config creation (init)
+  __main__.py  serve, login, check, init
 tests/
 ```
 
