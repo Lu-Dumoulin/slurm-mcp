@@ -13,7 +13,7 @@ An MCP server that lets a coding agent inspect and, with your approval, run jobs
 
 I built this mainly for my lab, the Kruse group at the University of Geneva. We run simulations on the UNIGE Baobab cluster and most of us write code with a coding agent. The agent could not see the cluster, so we pasted `squeue` output and logs into the chat. Each person runs the server on their own machine with their own SSH key and config. The design follows the SSH layer of [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool for running and downloading parameter sweeps: one shared SSH connection, and incremental downloads that compare modification times.
 
-**Status.** Everything is implemented and covered by offline tests. On Baobab I have run the read-only tools (queue, accounting history, directory listing) and `slurm-mcp doctor --smoke`, which generated, submitted and followed a real job from the `smoke` preset (it completed and the diagnosis matched). Cancel was also tested once on Baobab (a pending job).
+**Status.** Covered by offline tests. Run on Baobab so far: the read-only tools, `slurm-mcp doctor --smoke` (a real job from the `smoke` preset, followed to the end), and cancelling a pending job. Upload, sweeps from a table, delete, hold and the other newer tools have offline tests only.
 
 ## Install
 
@@ -118,6 +118,43 @@ slurm-mcp doctor --smoke
 
 Also runs a real tiny job. It prints the full `smoke` preset script (15 minutes on `debug-cpu`, command `hostname; date; echo smoke-ok`) and asks you to type `y` before submitting. It then follows the job, prints the diagnosis and output, and reports pass or fail. `--preset debug` tests another preset. After 5 minutes in the queue it stops waiting and prints the job id; the job stays queued.
 
+## Example session
+
+Recorded on Baobab, 22 November 2026 (the smoke test of this project). Output is shortened, and the username in paths is replaced by `<user>`; `<u>` is the first letter of `<user>` (Baobab home folders are `/home/users/<u>/<user>`).
+
+> **You:** Run a smoke test on Baobab.
+>
+> **Claude** calls `list_presets`, then `submit_preset_dry_run(preset="smoke", gpu=false, command=["bash", "-c", "hostname; date; echo smoke-ok"], workdir="/home/users/<u>/<user>/slurm-mcp-jobs", job_name="slurm-mcp-smoke")`. Nothing is submitted yet. It shows you the summary, the full script and the command:
+>
+> ```
+> 1 task(s), 1 CPU(s) each, up to 00:15:00 each, 2G each, partition debug-cpu, GPU: no
+>
+> #!/bin/bash
+> #SBATCH --job-name=slurm-mcp-smoke
+> #SBATCH --partition=debug-cpu
+> #SBATCH --time=00:15:00
+> #SBATCH --cpus-per-task=1
+> #SBATCH --mem=2G
+> #SBATCH --output=%x-%j.out
+>
+> cd /home/users/<u>/<user>/slurm-mcp-jobs || exit 1
+> srun bash -c 'hostname; date; echo smoke-ok'
+> ```
+>
+> **You:** yes
+>
+> **Claude** calls `submit_job` with the token from the dry run: job 14501969 is submitted. Then `diagnose_job("14501969")`. A few seconds later the job is done:
+>
+> ```
+> state: COMPLETED
+> completed with exit code 0
+> memory was over-requested: peak 6 MB of 2048 MB; you could ask for less
+> stdout: cpu001.baobab
+>         Sun Nov 22 01:32:41 PM CET 2026
+>         smoke-ok
+> stderr: merged into the stdout log (no separate --error file)
+> ```
+
 ## Tools
 
 | Tool | What it does | Writes |
@@ -153,6 +190,27 @@ Also runs a real tiny job. It prints the full `smoke` preset script (15 minutes 
 | `cancel_job(confirmation_token)` | Runs the command from that dry run | cancels jobs |
 
 The write tools (job submission and its presets, cancel, cancel several, hold and release, delete, and the two upload tools) exist only when `enable_writes = true`. Each of them takes the token **and** a `review_text` argument, see "The approval prompt shows the plan" below. The upload tools and `compare_code` also need an allowed local folder (see Code upload). Without it the server exposes the read-only tools and `fetch_results`.
+
+## Safety model
+
+- **No shell access.** Each tool maps to a fixed command template (`squeue`, `sacct`, `scontrol show job`, `tail`, `find`, `head`, `scp`). Arguments are shell-quoted. Job ids must be `digits` or `digits_arrayindex`.
+- **Path confinement.** Remote paths must be absolute, use a conservative character set (no spaces, globs, quotes, `~` or `..`) and lie inside a configured `remote_root`. This includes log paths that Slurm reports. Symlinks on the cluster are not resolved, so a symlink inside a root that points outside it would be followed: keep roots free of such links.
+- **Bounded output.** Tail length, listing size, table size and download volume are capped by config.
+- **Local writes are confined.** `fetch_results` writes below `local_dir`, mirrors the remote path, uses a `.part` file first, and refuses downloads above `max_download_mb`. Use `dry_run=true` to preview.
+- **Tool annotations.** Every tool declares `readOnlyHint`, so clients can skip prompts for the read-only ones. `submit_job` and `cancel_job` are not read-only and `cancel_job` is destructive, so clients ask you first.
+- **Writes are off by default.** Submit and cancel are not registered without `enable_writes = true`, and the cluster-facing code refuses them too.
+- **The approval prompt shows the plan.** A token alone would show you `confirmation_token: xyz` in your client's approval prompt. So every dry run also returns a `review_text` (the exact command and the full script, file list, job list or entries), and each write tool must be called with that text unchanged. The server refuses the call if it differs from the stored plan, which keeps the token valid, and since clients show tool arguments in the prompt, you see what is about to happen there. Lists are capped at 300 lines with a count of the rest, and the plan hash covers everything. `submit_job`, `hold_job` and `release_job` are annotated destructive like the others.
+- **Secrets are not readable.** `read_file`, `grep_file`, `tail_file`, `job_log`, `read_parameter_table`, `list_files` and `fetch_results` refuse paths that look like secrets (`.ssh`, `.gnupg`, `.aws`, `.netrc`, `.env*`, `id_rsa*` and other keys, `*.pem`, `*.key`, `credentials*`, `secrets*`, shell and REPL histories, keychains ...) by any path component, list them nowhere, and resolve the path on the cluster first, so a symlink cannot lead to one. Add patterns with `sensitive_extra`. Keep your roots as narrow as you reasonably can.
+- **Protect the configuration.** `enable_writes`, the roots and the presets live in `~/.config/slurm-mcp/config.toml`, which an agent could edit with its ordinary file tools. The server refuses `/`, top-level folders and system folders as roots, and tells the agent to propose any config change first, with a warning about what it widens and a diff. To make the client enforce this, see the `ask` rules below.
+- **Queue warning and ceiling.** Big parameter scans are normal, so nothing is refused below `max_queued_jobs` (default 10000, array tasks counted). A dry run that would bring your queued jobs above `warn_queued_jobs` (default 1000) adds a clear warning, in the dry-run result and at the top of `review_text` so it appears in the approval prompt: "LARGE SUBMISSION: this adds N job(s) or tasks; you would have M jobs queued (you have K now; warning threshold 1000, hard limit 10000)". Above the hard limit the dry run is refused.
+- **`fetch_results` looks first.** `dry_run` defaults to true. Real downloads never replace a local file that is newer, and refuse a download folder that resolves outside `local_dir`.
+- **Two steps with a token.** A dry run stores the exact remote command and returns a random single-use token that expires (default 5 minutes). The real call takes only the token, so what runs is what was shown. Tokens live in memory; restarting the server invalidates them.
+- **Narrow write scope.** Submission is `sbatch --parsable` of one regular file inside a root (existing, or generated from a preset), run from its directory or the job's working directory, with no extra options. Cancellation is `scancel` of a validated job id that is in your own `squeue --me`. Cancelling a plain id cancels a whole array; use `123_4` for one task. No other command can be passed.
+- **What the token does not prove.** It proves the executed command equals the reviewed one, not that a person approved it: a model could call both steps in a row. The human check is your client's approval prompt, so do not set `submit_job` or `cancel_job` to always-allow. A script that already exists on the cluster is only previewed (first 2000 bytes).
+- **Deleting is the most guarded write.** `delete` works only strictly inside `remote_roots`: never a root, anything above one, or a folder that contains one, never inside `.ssh` or `.gnupg`, and never through a symbolic link (the path is resolved on the cluster and must equal the path given). The dry run lists counts, size and the largest files, the token is tied to that exact content, and the delete is refused if anything changed in between.
+- **Cancelling several jobs** only ever lists jobs from `squeue --me` and runs `scancel` with explicit job ids (never `-u`). The token is tied to the listed jobs.
+- **Uploads are confined on both sides.** See "Code upload": a local allowlist, secrets excluded by name, a destination checked by real path, confirmation for large files, and an overwrite warning in the dry run.
+- **No credentials in the repo or config.** Authentication is your normal `~/.ssh` setup. `ssh` runs with `BatchMode=yes`, so it never waits at a password prompt.
 
 ## Generated jobs and presets
 
@@ -197,64 +255,6 @@ Both submit dry runs accept a short whitelist: `dependency` (`afterok:123`, `aft
 
 Checking that the two sides match, like CommonUI's check: `compare_code(remote_dir, local_path=None)` is read-only and lists files only local, only on the cluster, with a different size, newer on one side (same size), and how many match. As in CommonUI, sizes decide; modification times only label same-size files. Files that exist only on the cluster do not count against "identical". `upload_code(..., verify=true)` runs the same size check on the uploaded files right after the upload. It is off by default.
 
-## Safety model
-
-- **No shell access.** Each tool maps to a fixed command template (`squeue`, `sacct`, `scontrol show job`, `tail`, `find`, `head`, `scp`). Arguments are shell-quoted. Job ids must be `digits` or `digits_arrayindex`.
-- **Path confinement.** Remote paths must be absolute, use a conservative character set (no spaces, globs, quotes, `~` or `..`) and lie inside a configured `remote_root`. This includes log paths that Slurm reports. Symlinks on the cluster are not resolved, so a symlink inside a root that points outside it would be followed: keep roots free of such links.
-- **Bounded output.** Tail length, listing size, table size and download volume are capped by config.
-- **Local writes are confined.** `fetch_results` writes below `local_dir`, mirrors the remote path, uses a `.part` file first, and refuses downloads above `max_download_mb`. Use `dry_run=true` to preview.
-- **Tool annotations.** Every tool declares `readOnlyHint`, so clients can skip prompts for the read-only ones. `submit_job` and `cancel_job` are not read-only and `cancel_job` is destructive, so clients ask you first.
-- **Writes are off by default.** Submit and cancel are not registered without `enable_writes = true`, and the cluster-facing code refuses them too.
-- **The approval prompt shows the plan.** A token alone would show you `confirmation_token: xyz` in your client's approval prompt. So every dry run also returns a `review_text` (the exact command and the full script, file list, job list or entries), and each write tool must be called with that text unchanged. The server refuses the call if it differs from the stored plan, which keeps the token valid, and since clients show tool arguments in the prompt, you see what is about to happen there. Lists are capped at 300 lines with a count of the rest, and the plan hash covers everything. `submit_job`, `hold_job` and `release_job` are annotated destructive like the others.
-- **Secrets are not readable.** `read_file`, `grep_file`, `tail_file`, `job_log`, `read_parameter_table`, `list_files` and `fetch_results` refuse paths that look like secrets (`.ssh`, `.gnupg`, `.aws`, `.netrc`, `.env*`, `id_rsa*` and other keys, `*.pem`, `*.key`, `credentials*`, `secrets*`, shell and REPL histories, keychains ...) by any path component, list them nowhere, and resolve the path on the cluster first, so a symlink cannot lead to one. Add patterns with `sensitive_extra`. Keep your roots as narrow as you reasonably can.
-- **Protect the configuration.** `enable_writes`, the roots and the presets live in `~/.config/slurm-mcp/config.toml`, which an agent could edit with its ordinary file tools. The server refuses `/`, top-level folders and system folders as roots, and tells the agent to propose any config change first, with a warning about what it widens and a diff. To make the client enforce this, see the `ask` rules below.
-- **Queue warning and ceiling.** Big parameter scans are normal, so nothing is refused below `max_queued_jobs` (default 10000, array tasks counted). A dry run that would bring your queued jobs above `warn_queued_jobs` (default 1000) adds a clear warning, in the dry-run result and at the top of `review_text` so it appears in the approval prompt: "LARGE SUBMISSION: this adds N job(s) or tasks; you would have M jobs queued (you have K now; warning threshold 1000, hard limit 10000)". Above the hard limit the dry run is refused.
-- **`fetch_results` looks first.** `dry_run` defaults to true. Real downloads never replace a local file that is newer, and refuse a download folder that resolves outside `local_dir`.
-- **Two steps with a token.** A dry run stores the exact remote command and returns a random single-use token that expires (default 5 minutes). The real call takes only the token, so what runs is what was shown. Tokens live in memory; restarting the server invalidates them.
-- **Narrow write scope.** Submission is `sbatch --parsable` of one regular file inside a root (existing, or generated from a preset), run from its directory or the job's working directory, with no extra options. Cancellation is `scancel` of a validated job id that is in your own `squeue --me`. Cancelling a plain id cancels a whole array; use `123_4` for one task. No other command can be passed.
-- **What the token does not prove.** It proves the executed command equals the reviewed one, not that a person approved it: a model could call both steps in a row. The human check is your client's approval prompt, so do not set `submit_job` or `cancel_job` to always-allow. A script that already exists on the cluster is only previewed (first 2000 bytes).
-- **Deleting is the most guarded write.** `delete` works only strictly inside `remote_roots`: never a root, anything above one, or a folder that contains one, never inside `.ssh` or `.gnupg`, and never through a symbolic link (the path is resolved on the cluster and must equal the path given). The dry run lists counts, size and the largest files, the token is tied to that exact content, and the delete is refused if anything changed in between.
-- **Cancelling several jobs** only ever lists jobs from `squeue --me` and runs `scancel` with explicit job ids (never `-u`). The token is tied to the listed jobs.
-- **Uploads are confined on both sides.** See "Code upload": a local allowlist, secrets excluded by name, a destination checked by real path, confirmation for large files, and an overwrite warning in the dry run.
-- **No credentials in the repo or config.** Authentication is your normal `~/.ssh` setup. `ssh` runs with `BatchMode=yes`, so it never waits at a password prompt.
-
-## Example session
-
-Recorded on Baobab, 22 November 2026 (the smoke test of this project). Output is shortened, and the username in paths is replaced by `<user>`.
-
-> **You:** Run a smoke test on Baobab.
->
-> **Claude** calls `list_presets`, then `submit_preset_dry_run(preset="smoke", gpu=false, command=["bash", "-c", "hostname; date; echo smoke-ok"], workdir="/home/users/d/<user>/slurm-mcp-jobs", job_name="slurm-mcp-smoke")`. Nothing is submitted yet. It shows you the summary, the full script and the command:
->
-> ```
-> 1 task(s), 1 CPU(s) each, up to 00:15:00 each, 2G each, partition debug-cpu, GPU: no
->
-> #!/bin/bash
-> #SBATCH --job-name=slurm-mcp-smoke
-> #SBATCH --partition=debug-cpu
-> #SBATCH --time=00:15:00
-> #SBATCH --cpus-per-task=1
-> #SBATCH --mem=2G
-> #SBATCH --output=%x-%j.out
->
-> cd /home/users/d/<user>/slurm-mcp-jobs || exit 1
-> srun bash -c 'hostname; date; echo smoke-ok'
-> ```
->
-> **You:** yes
->
-> **Claude** calls `submit_job` with the token from the dry run: job 14501969 is submitted. Then `diagnose_job("14501969")`. A few seconds later the job is done:
->
-> ```
-> state: COMPLETED
-> completed with exit code 0
-> memory was over-requested: peak 6 MB of 2048 MB; you could ask for less
-> stdout: cpu001.baobab
->         Sun Nov 22 01:32:41 PM CET 2026
->         smoke-ok
-> stderr: merged into the stdout log (no separate --error file)
-> ```
-
 ## Tests
 
 ```bash
@@ -289,16 +289,6 @@ src/slurm_mcp/
 tests/
 docs/overview.svg
 ```
-
-## Roadmap
-
-Done: read-only tools, presets and script generation based on CommonUI, dry run plus token for submit and cancel (both tested on Baobab on 22 November 2026), `diagnose_job`, `slurm-mcp doctor --smoke`, per-GPU CPU caps, code upload with `compare_code`, parameter sweeps from a table, `read_file` and `grep_file`, `storage_info`, cancel several jobs, delete, sbatch options, hold and release. Everything after the first two submit and cancel tests has offline tests only.
-
-Next:
-- Run the new tools once on the real cluster: upload and compare, a sweep from a `DF.csv`, delete, cancel several.
-- Onboarding for new lab members with a shared lab config.
-- Tested setup notes for other coding agents.
-- A real recorded session in the example, from a longer run.
 
 ## Acknowledgements
 
