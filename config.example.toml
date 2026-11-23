@@ -49,10 +49,10 @@ local_dir = "~/slurm-mcp-downloads"
 # allow_exclusive = false
 
 # --- Storage -------------------------------------------------------------------------------------
-# Commands whose output storage_info returns, as fixed commands without arguments. On Baobab
+# Commands whose output storage_info returns, as fixed commands. On Baobab
 # this prints your own home and scratch quota (home is limited by size, scratch by file count).
-# Never add -u or -g for other users.
-quota_commands = [["beegfs-get-quota-home-scratch.sh"]]
+# The script needs -u. Write {user}: the server inserts your own username. Other users and -g are refused.
+quota_commands = [["beegfs-get-quota-home-scratch.sh", "-u", "{user}"]]
 # du_timeout_s = 120
 
 # --- Code upload (only used when enable_writes = true) -------------------------------------

@@ -138,6 +138,16 @@ class Config:
         qc = data.get("quota_commands", [])
         if not isinstance(qc, list) or not all(isinstance(c, list) and c and all(isinstance(a, str) and a for a in c) for c in qc):
             raise ConfigError("quota_commands must be a list of commands, each a list of strings")
+        for command in qc:
+            for arg in command:
+                if re.search(r"\{(?!user\})[^}]*\}", arg):
+                    raise ConfigError(f"quota_commands: only the placeholder {{user}} is allowed, not {arg!r}")
+            for i, arg in enumerate(command):
+                if arg in ("-g", "--group"):
+                    raise ConfigError("quota_commands: a group option is not allowed (only your own quota)")
+                if arg in ("-u", "--user", "--uid") and (i + 1 >= len(command) or command[i + 1] != "{user}"):
+                    raise ConfigError("quota_commands: after -u, --user or --uid, write {user} "
+                                      "(the server inserts your own username; other users are not allowed)")
         kwargs["quota_commands"] = tuple(tuple(c) for c in qc)
         excl = data.get("upload_exclude", [])
         if not isinstance(excl, list) or not all(isinstance(e, str) and e for e in excl):

@@ -58,7 +58,7 @@ Optional keys (the default is in the second column):
 | `max_list_entries` | `1000` | The maximum number of entries that `list_files` returns. |
 | `max_download_mb` | `500` | The maximum size of one `fetch_results` download. |
 | `du_timeout_s` | `120` | The time limit of `du` in `storage_info`, in seconds. |
-| `quota_commands` | `[]` | Fixed commands whose output `storage_info` returns. Baobab: `[["beegfs-get-quota-home-scratch.sh"]]`. Never add `-u` or `-g`. |
+| `quota_commands` | `[]` | Fixed commands whose output `storage_info` returns. Baobab: `[["beegfs-get-quota-home-scratch.sh", "-u", "{user}"]]`. `-u` takes your own user from the config (`user`). Do not put another user name there: the config refuses `-u` with any other value, and refuses `-g`. |
 | `confirmation_ttl_s` | `300` | How long a token is valid, in seconds. |
 | `jobs_dir` | first root + `/slurm-mcp-jobs` | The folder for generated scripts. It must be inside a root. |
 | `max_array_size` | `10000` | The maximum number of array tasks. Indices must stay below it. |

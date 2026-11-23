@@ -255,7 +255,8 @@ class Cluster:
                 out["du"] = ({"path": path, "bytes": size} if size is not None and res.returncode == 0
                              else {"path": path, "error": res.stderr.strip()[:200] or "du failed", "bytes": size})
         quotas = []
-        for argv in self.cfg.quota_commands:
+        for template in self.cfg.quota_commands:
+            argv = [arg.replace("{user}", self.cfg.user) for arg in template]     # always your own username
             res = self.runner.run(cmd.ssh_argv(self.cfg, list(argv)), self.cfg.command_timeout)
             entry = {"command": " ".join(argv), "exit_code": res.returncode, "output": (res.stdout or res.stderr)[:4000]}
             parsed = parse_beegfs_quota(res.stdout) if res.returncode == 0 else None

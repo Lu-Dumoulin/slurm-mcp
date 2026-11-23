@@ -117,10 +117,35 @@ def test_storage_info_adds_the_parsed_quota_next_to_the_raw_output(tmp_path):
     assert "parsed" not in odd.storage_info()["quota"][0]
 
 
-def test_example_config_runs_no_quota_command_with_user_arguments():
+def test_example_config_asks_only_for_your_own_quota():
     import tomllib
     from pathlib import Path
 
     cfg = Config.from_dict(tomllib.loads((Path(__file__).resolve().parent.parent / "config.example.toml").read_text()))
-    assert cfg.quota_commands == (("beegfs-get-quota-home-scratch.sh",),)
-    assert not any(a in ("-u", "-g") for c in cfg.quota_commands for a in c)
+    assert cfg.quota_commands == (("beegfs-get-quota-home-scratch.sh", "-u", "{user}"),)
+    assert not any(a in ("-g", "--group") for c in cfg.quota_commands for a in c)
+
+
+def test_user_placeholder_is_replaced_by_your_own_username(tmp_path):
+    cfg = make_config(tmp_path, quota_commands=(("beegfs-get-quota-home-scratch.sh", "-u", "{user}"),))
+    cl = Cluster(cfg, FakeRunner(ssh_replies={"df -P -k": (DF, 0), "beegfs-get-quota": (QUOTA, 0)}))
+    q = cl.storage_info()["quota"][0]
+    assert q["command"] == "beegfs-get-quota-home-scratch.sh -u alice" and [r["storage"] for r in q["parsed"]] == ["home", "scratch"]
+    assert "beegfs-get-quota-home-scratch.sh -u alice" in cl.runner.remote_commands()
+
+
+@pytest.mark.parametrize("command", [
+    ["quota.sh", "-u", "bob"], ["quota.sh", "-u"], ["quota.sh", "--user", "root"], ["quota.sh", "--uid", "0"],
+    ["quota.sh", "-g", "{user}"], ["quota.sh", "--group", "hpc_users"], ["quota.sh", "-u", "{user}", "-g", "x"],
+    ["quota.sh", "-u", "{USER}"], ["quota.sh", "-u", "{uid}"], ["quota.sh", "{home}"], ["quota.sh", "--name={user}{x}"],
+])
+def test_quota_commands_cannot_ask_for_other_users_or_groups(tmp_path, command):
+    base = dict(host="h.example.org", user="bob", remote_roots=["/s/bob/x"], local_dir=str(tmp_path))
+    with pytest.raises(ConfigError):
+        Config.from_dict({**base, "quota_commands": [command]})
+
+
+def test_user_placeholder_forms_that_are_accepted(tmp_path):
+    base = dict(host="h.example.org", user="bob", remote_roots=["/s/bob/x"], local_dir=str(tmp_path))
+    cfg = Config.from_dict({**base, "quota_commands": [["quota.sh", "-u", "{user}"], ["quota.sh", "--uid", "{user}"], ["quota.sh"]]})
+    assert len(cfg.quota_commands) == 3
