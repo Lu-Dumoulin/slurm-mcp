@@ -11,7 +11,7 @@ An MCP server that lets a coding agent inspect and, with your approval, run jobs
 - **Which agents.** Used with Claude Code and Claude Desktop. Other MCP clients that can launch a local stdio server should work but are untested.
 - **Safety.** Read-only by default. Submit and cancel are off until you enable them, then need a dry run showing the full script, a one-time token and your approval.
 
-I built this for my lab. We run simulations on a university cluster (UNIGE Baobab) and most of us write code with a coding agent. The agent could not see the cluster, so we pasted `squeue` output and logs into the chat. Each person runs the server on their own machine with their own SSH key and config. The design follows the SSH layer of [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool for running and downloading parameter sweeps: one shared SSH connection, and incremental downloads that compare modification times.
+I built this mainly for my lab, the Kruse group at the University of Geneva. We run simulations on the UNIGE Baobab cluster and most of us write code with a coding agent. The agent could not see the cluster, so we pasted `squeue` output and logs into the chat. Each person runs the server on their own machine with their own SSH key and config. The design follows the SSH layer of [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool for running and downloading parameter sweeps: one shared SSH connection, and incremental downloads that compare modification times.
 
 **Status.** Everything is implemented and covered by offline tests. On Baobab I have run the read-only tools (queue, accounting history, directory listing) and `slurm-mcp doctor --smoke`, which generated, submitted and followed a real job from the `smoke` preset (it completed and the diagnosis matched). Cancel was also tested once on Baobab (a pending job).
 
@@ -158,7 +158,7 @@ The write tools (job submission and its presets, cancel, cancel several, hold an
 
 Typical use: write code on your laptop with an agent, ask for a quick test on the cluster, read why it failed, fix it, run the real job. The agent does not write arbitrary batch files. It picks a **preset** from your config and the server renders the script, as CommonUI does.
 
-A preset fixes partition, time, CPUs, memory and (for GPU presets) the number of GPUs, with **hard caps** (`max_time`, `max_cpus`, `max_mem`, `max_gpus`; GPU presets use `max_cpus_per_gpu` instead of `max_cpus`, so 2 GPUs allow twice the CPUs). Overrides are refused above a cap. `config.example.toml` has five Baobab presets, checked with read-only `sinfo`: `smoke` (15 min on `debug-cpu`, fastest start), `debug` (30 min on `public-short-cpu`), `standard`, `gpu_debug` (30 min on `shared-gpu`; Baobab has no debug GPU partition) and `gpu`. The GPU list, partition list, 12 h default time, 3000 MB default memory and `%40` array throttle come from the CommonUI notebook. CommonUI preselects A100-40Gb and H100; the example preselects all three types.
+A preset fixes partition, time, CPUs, memory and (for GPU presets) the number of GPUs, with **hard caps** (`max_time`, `max_cpus`, `max_mem`, `max_gpus`; GPU presets use `max_cpus_per_gpu` instead of `max_cpus`, so 2 GPUs allow twice the CPUs). Overrides are refused above a cap. `config.example.toml` has five Baobab presets, checked with read-only `sinfo`: `smoke` (15 min on `debug-cpu`, fastest start), `debug` (30 min on `public-short-cpu`), `standard`, `gpu_debug` (30 min on `shared-gpu`; Baobab has no debug GPU partition) and `gpu`. The GPU list, partition list, 12 h default time, 3000 MB default memory and `%40` array throttle come from the CommonUI notebook. CommonUI preselects A100-40Gb and H100; the example preselects all three types. The example presets use the lab's own partition (`private-kruse-gpu`), so on another cluster adapt the partitions, time limits and GPU types to yours.
 
 - **GPU is never assumed.** `gpu` is a required parameter with no default, and the tool description tells the agent to ask you. If you want a GPU it asks which type from your configured list. The dry run echoes the choice, for example `GPU: yes, 1 x A100-40Gb|H100`.
 - **GPU availability is checked.** The dry run asks `sinfo` which node features each chosen partition has. With a list such as `private-kruse-gpu,shared-gpu` and an OR constraint, a type missing on one partition only gives a warning (for example "A100-80Gb is not available on private-kruse-gpu"), because Slurm uses whichever partition has a matching node. If no chosen partition has any chosen type, the job could never start and the dry run refuses.
@@ -258,6 +258,7 @@ Recorded on Baobab, 22 November 2026 (the smoke test of this project). Output is
 ## Tests
 
 ```bash
+pip install -e ".[dev]"   # once, installs pytest
 pytest -q
 ```
 
