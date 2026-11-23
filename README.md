@@ -13,7 +13,7 @@ An MCP server. It lets a coding agent look at a Slurm cluster over SSH. With you
 
 I built this mainly for my lab, the Kruse group at the University of Geneva. We run simulations on the UNIGE Baobab cluster and most of us write code with a coding agent. The agent could not see the cluster, so we pasted `squeue` output and logs into the chat. Each person runs the server on their own machine with their own SSH key and config. The design follows the SSH layer of [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool for parameter sweeps.
 
-**Status.** Offline tests cover all tools. On Baobab we ran only these tools so far: the read-only tools, `slurm-mcp doctor --smoke` and the cancel of a pending job. The smoke test ran a real job from the `smoke` preset to the end. The tools for upload, sweeps, delete and hold have offline tests only.
+**Status.** Offline tests cover all tools. On Baobab we ran only these tools so far: the read-only tools, `slurm-mcp doctor --smoke`, the cancel of a pending job, and (from Windows) `upload_code`, `compare_code` and a sweep with `array_from_table` and `dependency` (see the second example). The smoke test ran a real job from the `smoke` preset to the end. The tools for delete and hold have offline tests only.
 
 ## Install
 
@@ -88,6 +88,96 @@ Recorded on Baobab, 22 November 2026. The output is shortened. `<user>` replaces
 > ```
 
 Today, `submit_job` also needs the `review_text` of the dry run (see "Safety model").
+
+### Example: a two-stage parameter sweep from Windows
+
+Recorded on 23 November 2026, with Claude Code on a Windows 11 workstation. The output is shortened. The sweep is from the ActiveDewetting project. Stage 1 has 11 one-dimensional runs. Stage 2 has 50 two-dimensional runs, and each of them starts from a stage 1 result. Each run reads its row of a `DF.csv` file, as with CommonUI. This session found two Windows bugs, fixed in 25f39a9 (no shared SSH connection on Windows) and bda9f6e (generated scripts with CRLF line endings). The output below is from after both fixes.
+
+> **You:** Submit S5 and then S6 on Baobab, through slurm-mcp only.
+>
+> **Claude** calls `check_setup`:
+>
+> ```
+> [  OK] ssh connection: works without a prompt. The shared connection is off (ssh_multiplexing = auto): every call opens its own connection
+> [  OK] slurm: squeue works, 0 job(s) of yours in the queue
+> [  OK] root /srv/beegfs/scratch/users/<u>/<user>/Data
+> [  OK] root /home/users/<u>/<user>/Code
+> [WARN] preset julia_sim: A100-80Gb is not available on private-kruse-gpu
+> [  OK] upload folder D:\Data\ActiveDewetting\S5_S6_arp_cluster: listed in local_roots in the config
+> All checks passed.
+> ```
+>
+> Then `upload_code_dry_run(remote_dir="/home/users/<u>/<user>/Code/ActiveDewetting_S5", local_path="D:/Data/ActiveDewetting/S5_S6_arp_cluster/code_S5")`:
+>
+> ```
+> UPLOAD 5 file(s), 41.9 KB
+> from: D:\Data\ActiveDewetting\S5_S6_arp_cluster\code_S5
+> to: <user>@login1.baobab.hpc.unige.ch:/home/users/<u>/<user>/Code/ActiveDewetting_S5
+> command: mkdir -p -- /home/users/<u>/<user>/Code/ActiveDewetting_S5
+> command per file: scp -p <file> <dest>/.<name>.slurm-mcp-part, then mv -f to <name>; nothing is deleted
+> files:
+>   create    DF.csv  2.0 KB
+>   create    InputParameters.jl  3.5 KB
+>   create    kernels-test.jl  23.3 KB
+>   create    main-test.jl  8.7 KB
+>   create    utils.jl  4.4 KB
+> ```
+>
+> You approve the prompt for `upload_code`: 5 files are uploaded, and `verify=true` finds the same sizes on the cluster. Claude does the same for the stage 2 code, and uploads each `DF.csv` into its data folder on scratch. This also creates the working folders, because `submit_job` needs a working folder that exists. A second dry run later says `nothing to upload: the cluster already has these files`, and `compare_code` reports `identical: true, matching: 5`.
+>
+> For stage 1, Claude calls `submit_preset_dry_run(preset="julia_sim", gpu=true, gpu_types=["H100", "A100-40Gb", "A100-80Gb"], command=["julia", "-t", "auto", "--optimize=3", "/home/users/<u>/<user>/Code/ActiveDewetting_S5/main-test.jl"], workdir="/srv/beegfs/scratch/users/<u>/<user>/Data/ActiveDewetting/S5_arp_1D", job_name="S5_arp_1D_K", array="1-6", mem="8G", env={"path_to_data": ".../S5_arp_1D/{task_id}/"})`:
+>
+> ```
+> 6 task(s), 1 CPU(s) each, up to 12:00:00 each, 8G each, partition private-kruse-gpu,shared-gpu, GPU: yes, 1 x H100|A100-40Gb|A100-80Gb, env: use_gpu, path_to_data
+> WARNING: A100-80Gb is not available on private-kruse-gpu
+>
+> #!/bin/bash
+> #SBATCH --job-name=S5_arp_1D_K
+> #SBATCH --partition=private-kruse-gpu,shared-gpu
+> #SBATCH --time=0-12:00:00
+> #SBATCH --cpus-per-task=1
+> #SBATCH --mem=8G
+> #SBATCH --output=%x-%A_%a.out
+> #SBATCH --array=1-6%40
+> #SBATCH --gpus=1
+> #SBATCH --constraint=nvidia_h100_nvl|nvidia_a100-pcie-40gb|nvidia_a100_80gb_pcie
+>
+> module load Julia
+>
+> export use_gpu=true
+> export path_to_data=/srv/beegfs/scratch/users/<u>/<user>/Data/ActiveDewetting/S5_arp_1D/"${SLURM_ARRAY_TASK_ID}"/
+>
+> cd /srv/beegfs/scratch/users/<u>/<user>/Data/ActiveDewetting/S5_arp_1D || exit 1
+> srun julia -t auto --optimize=3 /home/users/<u>/<user>/Code/ActiveDewetting_S5/main-test.jl
+> ```
+>
+> You approve the prompt: `submit_job` returns job 14511300. The same call with `array="7-11"` gives job 14511313. Stage 2 needs only rows 7 to 11, so it waits on that job alone.
+>
+> For stage 2, Claude uses the table on the cluster for the array and adds the dependency: `submit_preset_dry_run(..., job_name="S6_arp_2D", array_from_table="/home/users/<u>/<user>/Code/ActiveDewetting_S6/DF.csv", dependency="afterok:14511313", ...)`:
+>
+> ```
+> 50 task(s), 1 CPU(s) each, up to 12:00:00 each, 8G each, partition private-kruse-gpu,shared-gpu, GPU: yes, 1 x H100|A100-40Gb|A100-80Gb, env: use_gpu, path_to_data, dependency afterok:14511313
+> ...
+> #SBATCH --array=1-50%40
+> ...
+> #SBATCH --dependency=afterok:14511313
+> ```
+>
+> You approve: job 14511322. Then `queue` shows the 11 stage 1 tasks running on private-kruse-gpu and shared-gpu, and stage 2 waiting:
+>
+> ```
+> 14511300_1 ... 14511300_6    RUNNING  private-kruse-gpu  gpu030, gpu031
+> 14511313_7, 14511313_8       RUNNING  private-kruse-gpu  gpu052
+> 14511313_9 ... 14511313_11   RUNNING  shared-gpu         gpu022, gpu027, gpu028
+> 14511322_[1-50%40]           PENDING  (Dependency)
+> ```
+
+Notes from this session:
+
+- On Windows, each tool call opens its own SSH connection. The session above needed about 20 calls.
+- A Windows path with a drive letter (`D:/Data/...`) works as `local_path`. `scp` reads it as a local file.
+- The MCP server loads its code once. After `git pull`, restart the agent session.
+- `submit_job` was approved one call at a time. Two approval prompts at the same time made the client cancel both.
 
 ## Tools
 
