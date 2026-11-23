@@ -139,6 +139,28 @@ def is_link_or_junction(path: Path) -> bool:
     return bool(attributes & 0x400)                          # FILE_ATTRIBUTE_REPARSE_POINT
 
 
+CRLF_CHECKED = (".sh", ".bash", ".slurm", ".sbatch", ".jl", ".py", ".csv")
+
+
+def script_bytes(text: str) -> bytes:
+    """The exact bytes of a generated script: UTF-8 with LF line endings on every system."""
+    return text.encode("utf-8")
+
+
+def crlf_files(files: Iterable[LocalFile]) -> list[str]:
+    """Relative paths of script, code and table files that have Windows line endings (CRLF)."""
+    found = []
+    for f in files:
+        if f.rel.lower().endswith(CRLF_CHECKED):
+            try:
+                with open(f.path, "rb") as fh:
+                    if b"\r\n" in fh.read(65536):
+                        found.append(f.rel)
+            except OSError:
+                continue
+    return found
+
+
 def is_excluded(name: str, rel: str, patterns: tuple[str, ...]) -> bool:
     return any(fnmatch.fnmatchcase(name, p) or fnmatch.fnmatchcase(rel, p) for p in patterns)
 

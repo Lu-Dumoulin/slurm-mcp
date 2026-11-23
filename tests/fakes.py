@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shlex
 from collections.abc import Callable, Sequence
@@ -35,6 +36,11 @@ class FakeRunner:
             if src in self.uploads:
                 self.uploads[dst] = self.uploads.pop(src)
             return Result(tuple(argv), 0, "", "")
+        if (argv[0] == "ssh" and remote.startswith("sha256sum ") and not any("sha256sum" in k for k in self.ssh_replies)):
+            path = remote.split(" ", 1)[1]                         # the hash of what was uploaded, unless a test scripts it
+            if path in self.uploads:
+                return Result(tuple(argv), 0, f"{hashlib.sha256(self.uploads[path].encode()).hexdigest()}  {path}\n", "")
+            return Result(tuple(argv), 1, "", "No such file")
         if argv[0] == "ssh" and remote.startswith("rm -f -- "):
             self.uploads.pop(shlex.split(remote)[3], None)
             return Result(tuple(argv), 0, "", "")
@@ -47,7 +53,7 @@ class FakeRunner:
 
     def _scp(self, argv: list[str]) -> Result:
         if "@" in argv[-1] and ":" in argv[-1]:  # upload: local file, then user@host:path
-            self.uploads[argv[-1].split(":", 1)[1]] = Path(argv[-2]).read_text()
+            self.uploads[argv[-1].split(":", 1)[1]] = Path(argv[-2]).read_bytes().decode("utf-8")   # raw bytes: no newline translation
             return Result(tuple(argv), 0)
         remote_path = argv[-2].split(":", 1)[1]
         local = Path(argv[-1])

@@ -43,10 +43,11 @@ def jobs(action: str, command: str, rows: Sequence[dict[str, str]]) -> str:
 
 
 def upload(to: str, source: str, mkdir: str | None, files: Sequence[tuple[str, int, str, bool]], total: int,
-           sha: str) -> str:
+           sha: str, warnings: Sequence[str] = ()) -> str:
     """files: (relative path, size, 'create' or 'overwrite', large)"""
     items = [f"  {act:9} {rel}  {_size(size)}{'  LARGE' if large else ''}" for rel, size, act, large in files]
-    out = [f"UPLOAD {len(files)} file(s), {_size(total)}", f"from: {source}", f"to: {to}"]
+    out = [f"UPLOAD {len(files)} file(s), {_size(total)}"] + [f"WARNING: {w}" for w in warnings]
+    out += [f"from: {source}", f"to: {to}"]
     if mkdir:
         out.append(f"command: {mkdir}")
     out += ["command per file: scp -p <file> <dest>/.<name>.slurm-mcp-part, then mv -f to <name>; nothing is deleted",

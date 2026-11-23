@@ -30,6 +30,7 @@ CommonUI selects A100-40Gb and H100. The example selects all three types. The ex
 - **The server validates everything else.** A strict pattern or a list in your config limits each value. The values are: job name, partition, time, memory, array spec, module names and GPU types. Nobody can add an `#SBATCH` line or a second command.
 - **Array limits.** An array has at most `max_array_size` tasks (default 10000). This is the Slurm limit of Baobab, so the indices must stay below it. Each array gets a `%N` limit for concurrent tasks.
 - **You review the whole script.** The dry run returns the script text, its SHA-256, a cost summary and the `sbatch` command. The cost summary shows tasks, CPUs, time, memory, partition and GPU.
+- **Line endings.** The server writes the script with LF line endings on every system. Before `sbatch`, it checks that the file on the cluster has the reviewed hash. For an existing script, the dry run refuses a file with CRLF line endings. The message shows the fix: use `dos2unix`, or upload the file again with LF.
 - **The token covers the exact script.** `submit_job` writes these bytes to `jobs_dir` and runs `sbatch` on them.
 
 A job that runs your code is still code on the cluster. You control it with four checks. These are your review of the full script, the resource caps, a working folder inside a root, and the approval prompt of your client.

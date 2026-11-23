@@ -24,7 +24,7 @@ from .paths import is_safe_relative, sensitive_match, validate_remote_path
 from . import review as rv
 from .runner import Runner
 from .sync import RemoteFile, SyncPlan, matches, plan_sync, scan_local
-from .uploads import DEFAULT_EXCLUDE, compare_trees, effective_roots, is_link_or_junction, plan_hash, resolve_local_path
+from .uploads import DEFAULT_EXCLUDE, crlf_files, script_bytes, compare_trees, effective_roots, is_link_or_junction, plan_hash, resolve_local_path
 from .uploads import scan_local as scan_local_files
 
 _MAX_TABLE_BYTES = 1_000_000
@@ -424,6 +424,11 @@ class Cluster:
         if not self._is_regular_file(path):
             raise SlurmMcpError(f"not a regular file on the cluster: {path}")
         digest = self._script_sha256(path)
+        if self._has_crlf(path):
+            raise SlurmMcpError(
+                f"{path} has Windows line endings (CRLF), and sbatch refuses such a script. Convert it with `dos2unix`, "
+                "or upload it again with LF line endings (in git, set `core.autocrlf` to `input`)"
+            )
         text = self._ssh(cmd.head_bytes_cmd(path, self.MAX_REVIEW_SCRIPT + 1)) or ""
         if len(text.encode()) > self.MAX_REVIEW_SCRIPT:
             raise SlurmMcpError(f"{path} is larger than {self.MAX_REVIEW_SCRIPT} bytes: too large to review in full, "
@@ -447,6 +452,14 @@ class Cluster:
         }
 
     MAX_REVIEW_SCRIPT = 20_000
+
+    def _has_crlf(self, path: str) -> bool:
+        """True if the file on the cluster has a carriage return. Output is read as text and loses the CR,
+        so grep counts the lines instead. rc 1 means none; any other error means "unknown", and the run goes on."""
+        res = self.runner.run(cmd.ssh_argv(self.cfg, cmd.grep_cr_cmd(path)), self.cfg.command_timeout)
+        if res.returncode == 255:
+            self._ssh(["true"])
+        return res.returncode == 0 and res.stdout.strip() not in ("", "0")
 
     def _script_sha256(self, path: str) -> str:
         out = (self._ssh(cmd.sha256_cmd(path)) or "").split()
@@ -516,7 +529,9 @@ class Cluster:
         )
         warnings = self.check_gpu_availability(spec)
         script = build_script(spec)
-        digest = hashlib.sha256(script.encode()).hexdigest()
+        if "\r" in script:
+            raise SlurmMcpError("the generated script contains a carriage return (Windows line ending); sbatch would refuse it")
+        digest = hashlib.sha256(script_bytes(script)).hexdigest()
         script_path = self._path(f"{self.cfg.scripts_dir}/{spec.job_name}-{digest[:8]}.sh")
         argv = cmd.sbatch_cmd(script_path, chdir=workdir)
         summary = summarize(spec)
@@ -637,6 +652,13 @@ class Cluster:
                 f"{len(large)} file(s) are larger than {self.cfg.large_file_mb} MB: upload_code needs "
                 "confirm_large_files listing them, after the user has agreed to send them"
             )
+        windows_endings = crlf_files(by_rel[p.file.rel] for p in plan.download)
+        if windows_endings:
+            warnings.append(
+                f"{len(windows_endings)} file(s) have Windows line endings (CRLF): {', '.join(windows_endings[:5])}"
+                f"{' ...' if len(windows_endings) > 5 else ''}. The server does not convert them. A shell script with CRLF "
+                "fails on the cluster. Convert them, or in git set `core.autocrlf` to `input`"
+            )
         if scan.unsafe_names:
             warnings.append(f"{scan.unsafe_names} file(s) skipped because their names have spaces or unusual characters")
         if scan.symlinks:
@@ -650,7 +672,8 @@ class Cluster:
             files_view = [(p.file.rel, p.file.size, "create" if p.reason == "missing" else "overwrite", p.file.size > large_bytes)
                           for p in plan.download]
             review = rv.upload(f"{self.cfg.user}@{self.cfg.host}:{dest}", str(real),
-                               shlex.join(cmd.mkdir_many_cmd(dirs)) if dirs else None, files_view, plan.total_bytes, digest)
+                               shlex.join(cmd.mkdir_many_cmd(dirs)) if dirs else None, files_view, plan.total_bytes, digest,
+                               [w for w in warnings if "line endings" in w])
             token = self.confirmations.issue("upload", [], f"upload {len(sent)} file(s) to {dest}", upload=tuple(sent),
                                              mkdirs=tuple(dirs), plan_sha256=digest, dest=dest, review=review)
         shown = [{"path": p.file.rel, "size": p.file.size, "action": "create" if p.reason == "missing" else "overwrite",
@@ -771,7 +794,8 @@ class Cluster:
         self._ssh(cmd.mkdir_cmd(remote_path.rsplit("/", 1)[0]))
         with tempfile.TemporaryDirectory() as tmp:
             local = Path(tmp) / "job.sh"
-            local.write_text(text)
+            # Bytes, not write_text: text mode turns "\n" into "\r\n" on Windows and sbatch refuses that.
+            local.write_bytes(script_bytes(text))
             res = self.runner.run(cmd.scp_upload_argv(self.cfg, str(local), remote_path), self.cfg.command_timeout)
         if res.returncode != 0:
             raise RemoteError(f"could not write the job script: {res.stderr.strip()[:300]}")
@@ -782,6 +806,10 @@ class Cluster:
         action = self.confirmations.redeem(confirmation_token, "submit")
         if action.script_text is not None and action.script_path:
             self._upload_script(action.script_text, action.script_path)
+            expected = hashlib.sha256(script_bytes(action.script_text)).hexdigest()
+            if self._script_sha256(action.script_path) != expected:      # catches any change on the way, such as CRLF
+                raise SlurmMcpError(f"the script on the cluster ({action.script_path}) is not the reviewed script, "
+                                    "nothing was submitted")
         elif action.script_path and action.plan_sha256:      # an existing script: it must be what was reviewed
             if self._script_sha256(action.script_path) != action.plan_sha256:
                 raise SlurmMcpError(f"{action.script_path} changed since the dry run, nothing was submitted: run the dry run again")

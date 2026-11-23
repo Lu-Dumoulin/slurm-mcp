@@ -157,6 +157,11 @@ def du_cmd(path: str) -> list[str]:
     return ["du", "-s", "-k", "-x", "-P", path]
 
 
+def grep_cr_cmd(path: str) -> list[str]:
+    """Count the lines with a carriage return (Windows line endings). Exit code 1 means none."""
+    return ["grep", "-c", "-P", "\\r", "--", path]
+
+
 def sha256_cmd(path: str) -> list[str]:
     return ["sha256sum", path]
 

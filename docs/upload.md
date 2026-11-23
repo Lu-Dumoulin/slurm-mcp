@@ -17,6 +17,7 @@ Use `upload_code_dry_run(remote_dir, local_path=None)` and then `upload_code(tok
 - **Files that are never sent.** `.git`, virtual environments, `__pycache__`, and the secrets from "Safety model" (`.env` files, SSH and cloud keys, `*.pem`, `*.key` and more). Also the folders `out`, `output`, `outputs` and `results`. The server skips symlinks and files with spaces or unusual characters in the name. Add patterns with `upload_exclude`. The server sends `data` folders.
 - **No partial files.** The server copies each file to `.<name>.slurm-mcp-part` and renames it when the copy is complete. If a copy fails, the old file stays unchanged. The server reports the failed file and removes its temporary file. This is the only remote deletion of this server. It continues with the other files.
 - **What you review is what is sent.** The token covers the exact file list (`plan_sha256`). If a local file changes or becomes a symlink after the dry run, the server uploads nothing.
+- **Line endings.** The server does not convert line endings. The dry run warns if `.sh`, `.bash`, `.slurm`, `.sbatch`, `.jl`, `.py` or `.csv` files have Windows line endings (CRLF). A shell script with CRLF fails on the cluster. Convert the files, or set `core.autocrlf` to `input` in git.
 - **Transport.** The server runs one `scp -p` for each file over the shared connection. This keeps the modification times. It does not use `rsync`, as in CommonUI, to stay portable (macOS has a limited `openrsync`).
 
 ## Compare local and remote files

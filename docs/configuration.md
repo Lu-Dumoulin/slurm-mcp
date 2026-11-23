@@ -117,6 +117,7 @@ Rules for paths:
 - In the config file, write a Windows path with forward slashes (`D:/Data/results`) or in single quotes (`'D:\Data\results'`). `init` writes them correctly.
 - In `claude_desktop_config.json`, write backslashes twice: `"D:\\tools\\slurm-mcp\\.venv\\Scripts\\slurm-mcp.exe"`.
 - `local_dir`, `local_roots` and the upload folder can use a drive letter.
+- **Line endings:** The server always writes generated scripts with LF line endings, also on Windows. A script with CRLF fails on the cluster, and `sbatch` refuses it.
 - The server refuses a drive root (`C:\`), your profile folder and any folder above it. It also refuses `C:\Windows`, `C:\Program Files` and general folders such as `Documents`, `Downloads` and `OneDrive`.
 - The server treats a junction like a symlink. It does not enter it.
 - Remote paths always use `/`.
