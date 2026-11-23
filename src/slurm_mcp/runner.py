@@ -30,6 +30,7 @@ class SubprocessRunner:
                 list(argv),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",       # the cluster speaks UTF-8; the Windows default is a legacy code page
                 errors="replace",
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,

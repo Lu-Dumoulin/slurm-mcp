@@ -46,7 +46,8 @@ Optional keys (the default is in the second column):
 | Key | Default | Meaning |
 |---|---|---|
 | `enable_writes` | `false` | Turns on all changes (submit, cancel, hold, release, upload, delete). |
-| `auto_connect` | `true` | Open the shared SSH connection without a prompt when no connection is open. |
+| `ssh_multiplexing` | `auto` | `auto` uses a shared SSH connection, except on Windows. `on` and `off` force the choice. See [Windows](#windows). |
+| `auto_connect` | `true` | Open the shared SSH connection without a prompt when no connection is open. It has no effect when the shared connection is off. |
 | `df_csv` | none | The default parameter table for `read_parameter_table`. |
 | `control_dir` | `~/.ssh/slurm-mcp-cm` | The folder for the `ControlMaster` socket. |
 | `control_persist` | `10m` | How long the shared connection stays open after the last use. |
@@ -90,6 +91,40 @@ To open the connection by hand:
 4. To see if the connection is open, run `slurm-mcp check`.
 
 If `slurm-mcp` is not in your `PATH`, use `/path/to/slurm-mcp/.venv/bin/slurm-mcp`.
+
+## Windows
+
+OpenSSH on Windows cannot share connections. The server turns the shared connection off by itself (`ssh_multiplexing = "auto"`). To force it, set `ssh_multiplexing` to `"on"` or `"off"`.
+
+**Warning:** Without a shared connection, each tool call opens its own SSH connection. Some clusters limit logins. Many calls in a row can reach this limit.
+
+To prepare a Windows computer:
+
+1. Open PowerShell as administrator. Run `Get-Service ssh-agent | Set-Service -StartupType Automatic`, then `Start-Service ssh-agent`.
+2. Load your key: `ssh-add $env:USERPROFILE\.ssh\id_ed25519`. `ssh-add` asks for the passphrase once. The ssh-agent keeps the key.
+3. Run `slurm-mcp check`. It tests one connection that must log in without a prompt.
+4. Run `slurm-mcp doctor`. The line `ssh connection` shows that the shared connection is off.
+
+On Windows, these commands behave differently:
+
+- `slurm-mcp check` does not use `ssh -O check`. It tests one new connection.
+- `slurm-mcp login` does not keep a connection open. It tests one login, and the login can ask for a password.
+- `slurm-mcp doctor` shows the value of `ssh_multiplexing`.
+- The server does not create the `control_dir` folder.
+
+Rules for paths:
+
+- In the config file, write a Windows path with forward slashes (`D:/Data/results`) or in single quotes (`'D:\Data\results'`). `init` writes them correctly.
+- In `claude_desktop_config.json`, write backslashes twice: `"D:\\tools\\slurm-mcp\\.venv\\Scripts\\slurm-mcp.exe"`.
+- `local_dir`, `local_roots` and the upload folder can use a drive letter.
+- The server refuses a drive root (`C:\`), your profile folder and any folder above it. It also refuses `C:\Windows`, `C:\Program Files` and general folders such as `Documents`, `Downloads` and `OneDrive`.
+- The server treats a junction like a symlink. It does not enter it.
+- Remote paths always use `/`.
+
+Not verified on a real Windows computer:
+
+- `scp` with a drive letter in a local path, for example `D:/Data/file`. If `scp` reads `D` as a host name, report it.
+- The tests that create symlinks need Windows developer mode.
 
 ## Check that it works
 

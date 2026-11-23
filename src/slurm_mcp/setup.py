@@ -31,7 +31,8 @@ def probe_cluster(host: str, user: str) -> str | None:
     tool call does not need another login.
     """
     cfg = Config(host=host, user=user, remote_roots=("/",), local_dir=Path("."))
-    cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if cfg.use_shared_connection:
+        cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     argv = ["ssh", *commands.ssh_options(cfg, batch=False), commands.target(cfg), "pwd"]
     try:
         proc = subprocess.run(argv, stdout=subprocess.PIPE, text=True, timeout=180, check=False)

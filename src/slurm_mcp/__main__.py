@@ -32,13 +32,19 @@ def main(argv: list[str] | None = None) -> int:
     except SlurmMcpError as exc:
         print(f"slurm-mcp: {exc}", file=sys.stderr)
         return 2
-    cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-    cfg.control_dir.chmod(0o700)        # also fixes a folder created earlier with looser permissions
+    if cfg.use_shared_connection:
+        cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        cfg.control_dir.chmod(0o700)    # also fixes a folder created earlier with looser permissions
 
     if args.command == "doctor":
         from .doctor import run_doctor
 
         return run_doctor(cfg, SubprocessRunner(), smoke=args.smoke, preset=args.preset)
+    if args.command in ("login", "check") and not cfg.use_shared_connection:
+        print("Shared SSH connections are off on this system (ssh_multiplexing = "
+              f"{cfg.ssh_multiplexing}). Each call opens its own connection, so nothing stays open.\n"
+              "Testing one connection now: it must log in without a prompt (use ssh-agent and ssh-add).",
+              file=sys.stderr)
     if args.command == "login":
         return subprocess.call(commands.login_argv(cfg))
     if args.command == "check":

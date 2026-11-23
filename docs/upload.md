@@ -8,7 +8,7 @@ Use `upload_code_dry_run(remote_dir, local_path=None)` and then `upload_code(tok
 
 - **Upload folder.** By default, this is the folder where the server started (the working folder of the agent). It is also the default `local_path`. The dry run shows which rule allowed the source (`allowed_because`).
 - **Claude Desktop.** It starts servers in `/` (we checked this on a running install). The server refuses `/`, so you must list upload folders in `local_roots`.
-- **Claude Code.** It should start servers in the project folder (we did not check this). The server also uses `CLAUDE_PROJECT_DIR` if it is set.
+- **Claude Code.** It is designed to start servers in the project folder (we did not check this). The server also uses `CLAUDE_PROJECT_DIR` if it is set.
 - **Folders that are never used.** `/`, your home folder or a folder above it, system folders, and general folders such as `~/Documents`. Set `upload_from_cwd = false` to turn the default off. `slurm-mcp doctor` lists the upload folders.
 - **Destination.** It must be inside a root. The server resolves it on the cluster with `realpath`.
 - **Incremental, no deletion.** The server sends only missing or newer files, so a second upload of the same code sends nothing. It never deletes remote files (CommonUI does not delete either). The dry run lists the files that it would replace as overwrites. It warns you if the remote copy is newer.

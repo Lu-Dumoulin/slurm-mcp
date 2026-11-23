@@ -24,7 +24,7 @@ from .paths import is_safe_relative, sensitive_match, validate_remote_path
 from . import review as rv
 from .runner import Runner
 from .sync import RemoteFile, SyncPlan, matches, plan_sync, scan_local
-from .uploads import DEFAULT_EXCLUDE, compare_trees, effective_roots, plan_hash, resolve_local_path
+from .uploads import DEFAULT_EXCLUDE, compare_trees, effective_roots, is_link_or_junction, plan_hash, resolve_local_path
 from .uploads import scan_local as scan_local_files
 
 _MAX_TABLE_BYTES = 1_000_000
@@ -40,6 +40,8 @@ class Cluster:
 
     # --- plumbing ---------------------------------------------------------------
     def _master_alive(self) -> bool:
+        if not self.cfg.use_shared_connection:
+            return True      # there is no shared connection to wait for: every call opens its own
         return self.runner.run(cmd.check_argv(self.cfg), 10).returncode == 0
 
     def _ssh(self, remote_args: list[str], *, allow_failure: bool = False) -> str | None:
@@ -57,6 +59,8 @@ class Cluster:
             return None
         if res.returncode == 255:
             hint = (" The key may not be loaded: try `ssh-add`, or" if "Permission denied" in res.stderr else "")
+            if not self.cfg.use_shared_connection:
+                hint += " (every call opens its own connection here, so the key must work without a prompt)"
             raise RemoteError(
                 "SSH connection failed and could not be opened without a prompt."
                 f"{hint} Run `{cmd.cli_name()} login` in a terminal, then retry. "
@@ -696,7 +700,7 @@ class Cluster:
             )  # the token is still valid
         self.confirmations.redeem(confirmation_token, "upload")
         for local, _, size, mtime_ns in action.upload:  # what is sent must be what was reviewed
-            if Path(local).is_symlink():
+            if is_link_or_junction(Path(local)):
                 raise SlurmMcpError(f"{local} is now a symbolic link: refusing to upload it; run the dry run again")
             try:
                 st = Path(local).stat()

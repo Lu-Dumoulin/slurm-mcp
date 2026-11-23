@@ -20,6 +20,11 @@ DEFAULT_CONFIG_PATH = Path("~/.config/slurm-mcp/config.toml")
 ENV_VAR = "SLURM_MCP_CONFIG"
 
 
+def platform_supports_multiplexing() -> bool:
+    """OpenSSH on Windows cannot share connections (ControlMaster)."""
+    return os.name != "nt"
+
+
 @dataclass(frozen=True)
 class Config:
     host: str
@@ -35,6 +40,7 @@ class Config:
     max_list_entries: int = 1000
     max_download_mb: int = 500
     extra_ssh_options: tuple[str, ...] = ()
+    ssh_multiplexing: str = "auto"              # "auto": shared connection except on Windows; "on"; "off"
     auto_connect: bool = True       # open the shared SSH connection non-interactively when needed
     enable_writes: bool = False     # expose submit/cancel tools (off by default)
     confirmation_ttl_s: int = 300   # lifetime of a confirmation token
@@ -58,6 +64,12 @@ class Config:
     presets: dict[str, Preset] = field(default_factory=dict)
 
     @property
+    def use_shared_connection(self) -> bool:
+        if self.ssh_multiplexing == "auto":
+            return platform_supports_multiplexing()
+        return self.ssh_multiplexing == "on"
+
+    @property
     def scripts_dir(self) -> str:
         return self.jobs_dir or f"{self.remote_roots[0].rstrip('/')}/slurm-mcp-jobs"
 
@@ -73,6 +85,8 @@ class Config:
         for key in ("host", "user"):
             if not isinstance(data[key], str) or not _NAME_RE.fullmatch(data[key]):
                 raise ConfigError(f"invalid {key}: {data[key]!r}")
+        if data.get("ssh_multiplexing", "auto") not in ("auto", "on", "off"):
+            raise ConfigError('ssh_multiplexing must be "auto", "on" or "off"')
         for key in ("auto_connect", "enable_writes"):
             if key in data and not isinstance(data[key], bool):
                 raise ConfigError(f"{key} must be true or false")

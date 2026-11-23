@@ -31,9 +31,12 @@ DEFAULT_EXCLUDE = (
 ) + SENSITIVE_NAMES
 
 # Folders that are never accepted as "the project the agent is working in".
-_SYSTEM_STRICT = {"bin", "sbin", "etc", "usr", "dev", "proc", "sys", "boot", "System", "Library", "Applications", "root"}
+# Names are compared in lower case, so they also match on Windows and on case-insensitive macOS.
+_SYSTEM_STRICT = {"bin", "sbin", "etc", "usr", "dev", "proc", "sys", "boot", "system", "library", "applications", "root",
+                  "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information"}
 _SYSTEM_SHALLOW = {"var", "private", "tmp", "opt", "lib", "run"}   # only the folder itself or one level below
-_HOME_STANDARD = {"Desktop", "Documents", "Downloads", "Library", "Movies", "Music", "Pictures", "Public"}
+_HOME_STANDARD = {"desktop", "documents", "downloads", "library", "movies", "music", "pictures", "public",
+                  "videos", "onedrive", "appdata"}
 
 
 @dataclass(frozen=True)
@@ -68,15 +71,15 @@ def project_dir_problem(path: Path, home: Path) -> str | None:
 
 def broad_folder_problem(path: Path, home: Path) -> str | None:
     """Why a folder is too broad to upload from (the folder need not exist)."""
-    if path == Path(path.anchor):
-        return "it is the filesystem root"
+    if path == type(path)(path.anchor):
+        return "it is the filesystem root (or a drive root)"
     if path == home or path in home.parents:
         return "it is your home folder or above"
     if home not in path.parents and len(path.parts) >= 2:
-        top, depth = path.parts[1], len(path.parts) - 1
+        top, depth = path.parts[1].lower(), len(path.parts) - 1
         if top in _SYSTEM_STRICT or (top in _SYSTEM_SHALLOW and depth <= 2):
             return "it is a system folder"
-    if path.parent == home and path.name in _HOME_STANDARD:
+    if path.parent == home and path.name.lower() in _HOME_STANDARD:
         return f"{path.name} is a general folder, not a project"
     return None
 
@@ -120,6 +123,20 @@ def effective_roots(
         if all(r != x.path for x in roots):
             roots.append(UploadRoot(r, "listed in local_roots in the config"))
     return roots, notes
+
+
+def is_link_or_junction(path: Path) -> bool:
+    """A symbolic link, or on Windows a junction or other reparse point. Python 3.11 does not see junctions as links."""
+    if path.is_symlink():
+        return True
+    junction = getattr(path, "is_junction", None)          # Python 3.12 and later
+    if junction is not None and junction():
+        return True
+    try:
+        attributes = getattr(os.lstat(path), "st_file_attributes", 0)    # only exists on Windows
+    except OSError:
+        return False
+    return bool(attributes & 0x400)                          # FILE_ATTRIBUTE_REPARSE_POINT
 
 
 def is_excluded(name: str, rel: str, patterns: tuple[str, ...]) -> bool:
@@ -176,7 +193,7 @@ def scan_local(real: Path, exclude: tuple[str, ...], max_files: int) -> LocalSca
         keep = []
         for d in sorted(dirnames):
             rel = (here / d).relative_to(real).as_posix()
-            if (here / d).is_symlink():
+            if is_link_or_junction(here / d):
                 symlinks += 1
             elif is_excluded(d, rel, exclude):
                 excluded += 1
@@ -186,7 +203,7 @@ def scan_local(real: Path, exclude: tuple[str, ...], max_files: int) -> LocalSca
         for f in sorted(filenames):
             p = here / f
             rel = p.relative_to(real).as_posix()
-            if p.is_symlink():
+            if is_link_or_junction(p):
                 symlinks += 1
             elif is_excluded(f, rel, exclude):
                 excluded += 1

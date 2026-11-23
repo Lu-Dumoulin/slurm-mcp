@@ -62,12 +62,13 @@ def ssh_options(cfg: Config, *, batch: bool = True) -> list[str]:
     %C is a short fixed-length hash of (local host, remote host, port, user), which
     keeps the socket path under the OS limit.
     """
-    opts = [
-        "-o", f"ConnectTimeout={cfg.connect_timeout}",
-        "-o", "ControlMaster=auto",
-        "-o", f"ControlPath={cfg.control_dir}/%C",
-        "-o", f"ControlPersist={cfg.control_persist}",
-    ]
+    opts = ["-o", f"ConnectTimeout={cfg.connect_timeout}"]
+    if cfg.use_shared_connection:      # off on Windows: OpenSSH there cannot share connections
+        opts += [
+            "-o", "ControlMaster=auto",
+            "-o", f"ControlPath={cfg.control_dir}/%C",
+            "-o", f"ControlPersist={cfg.control_persist}",
+        ]
     if batch:
         opts += ["-o", "BatchMode=yes"]
     opts += list(cfg.extra_ssh_options)
@@ -88,12 +89,18 @@ def scp_upload_argv(cfg: Config, local_path: str, remote_path: str, *, preserve_
 
 
 def login_argv(cfg: Config) -> list[str]:
-    """Interactive: opens the master connection in the background after authentication."""
-    return ["ssh", *ssh_options(cfg, batch=False), "-fN", target(cfg)]
+    """Interactive. With a shared connection: opens the master connection in the background after
+    authentication. Without one: runs a single `true` to test that the login works."""
+    if cfg.use_shared_connection:
+        return ["ssh", *ssh_options(cfg, batch=False), "-fN", target(cfg)]
+    return ["ssh", *ssh_options(cfg, batch=False), target(cfg), "true"]
 
 
 def check_argv(cfg: Config) -> list[str]:
-    return ["ssh", *ssh_options(cfg), "-O", "check", target(cfg)]
+    """Is the shared connection open? Without one: can a new connection log in without a prompt?"""
+    if cfg.use_shared_connection:
+        return ["ssh", *ssh_options(cfg), "-O", "check", target(cfg)]
+    return ["ssh", *ssh_options(cfg), target(cfg), "true"]
 
 
 # --- remote side: fixed templates ---------------------------------------------------

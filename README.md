@@ -8,7 +8,7 @@ An MCP server. It lets a coding agent look at a Slurm cluster over SSH. With you
 
 - **What it is.** A narrow and safe window onto your cluster for a coding agent. You write code on your laptop. Then you ask "why did job 123 fail?" or "run this on the debug preset". You do not paste terminal output.
 - **Where it runs.** On your computer. The agent starts it over MCP (stdio). It uses one shared SSH connection to the cluster. Nothing is installed on the cluster. No password is stored.
-- **Which agents.** It works with Claude Code and Claude Desktop. Other MCP clients that start local stdio servers should work. We did not test them.
+- **Which agents.** It works with Claude Code and Claude Desktop. We did not test other MCP clients. They must support local stdio servers.
 - **Safety.** Read-only by default. Changes (submit, cancel, upload, delete) are off until you turn them on. Then each change needs a dry run, a one-time token and your approval.
 
 I built this mainly for my lab, the Kruse group at the University of Geneva. We run simulations on the UNIGE Baobab cluster and most of us write code with a coding agent. The agent could not see the cluster, so we pasted `squeue` output and logs into the chat. Each person runs the server on their own machine with their own SSH key and config. The design follows the SSH layer of [CommonUI](https://github.com/Lu-Dumoulin/CommonUI), a Julia tool for parameter sweeps.
@@ -21,7 +21,7 @@ Terms: a **root** is a remote folder that the tools can use (you list roots in `
 
 1. Install Python 3.11 or newer.
 2. Clone the repository and open its folder.
-3. On macOS or Linux, run `./install.sh`. On Windows, run `install.bat`.
+3. On macOS or Linux, run `./install.sh`. On Windows, run `install.bat` and read the [Windows notes](docs/configuration.md#windows).
 4. Answer the questions of `slurm-mcp init`. The script starts it.
 5. If `~/.local/bin` is not in your `PATH`, add it. The script links `slurm-mcp` into this folder.
 6. Register the server with your agent (see below).

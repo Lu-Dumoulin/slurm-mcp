@@ -59,7 +59,11 @@ def run_doctor(
 
     try:
         cluster._ssh(["true"])
-        report("OK", "ssh connection", "shared connection works without a prompt")
+        if cfg.use_shared_connection:
+            report("OK", "ssh connection", "shared connection works without a prompt")
+        else:
+            report("OK", "ssh connection", "works without a prompt. The shared connection is off "
+                   f"(ssh_multiplexing = {cfg.ssh_multiplexing}): every call opens its own connection")
     except RemoteError as exc:
         report("FAIL", "ssh connection", str(exc))
         out("Remote checks skipped.")
