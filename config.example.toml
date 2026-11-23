@@ -31,6 +31,43 @@ local_dir = "~/slurm-mcp-downloads"
 # enable_writes = false
 # confirmation_ttl_s = 300
 
+# --- Safety limits -----------------------------------------------------------------------------
+# Refuse a submission that would push your queue (array tasks counted) past this many jobs.
+# Warn (in the dry run and in the approval text) when a submission brings your queue above this.
+# warn_queued_jobs = 1000
+# max_queued_jobs = 10000
+# Extra name patterns that are never read, listed or downloaded, on top of the built-in list
+# (.ssh, .env*, keys, credentials*, histories ...).
+# sensitive_extra = ["*.licence"]
+
+# --- sbatch options (only used when enable_writes = true) ----------------------------------------
+# Job mail goes only to this address, never to one given by the agent.
+# mail_user = "you@example.org"
+# qos names and exclusive nodes the agent may ask for on existing scripts. A preset has its own
+# allowed_qos and allow_exclusive keys.
+# allowed_qos = []
+# allow_exclusive = false
+
+# --- Storage -------------------------------------------------------------------------------------
+# Commands whose output storage_info returns, as fixed commands without arguments. On Baobab
+# this prints your own home and scratch quota (home is limited by size, scratch by file count).
+# Never add -u or -g for other users.
+quota_commands = [["beegfs-get-quota-home-scratch.sh"]]
+# du_timeout_s = 120
+
+# --- Code upload (only used when enable_writes = true) -------------------------------------
+# The agent may upload from the folder it works in (the folder the server is started in, unless
+# that is too broad, such as / or your home). Claude Desktop starts servers in /, so list the
+# folders there. Add more folders with local_roots.
+# local_roots = ["~/Documents/GitHub"]
+# upload_from_cwd = true
+# Names that are never uploaded, on top of the built-in list (.git, .venv, __pycache__, .env,
+# keys, out, output, outputs, results ...). Patterns match a file name or a relative path.
+# upload_exclude = ["*.h5", "Data"]
+# Files above this size need an extra confirmation to upload (no size limit otherwise).
+# large_file_mb = 10
+# max_upload_files = 5000        # sanity limit on the number of files
+
 # --- Job presets (only used when enable_writes = true) --------------------------------
 # Example values for UNIGE Baobab, checked with read-only `sinfo`. The GPU types, the
 # partition list, the 12 h default time and the 3000 MB default memory are the ones in the
@@ -39,7 +76,7 @@ local_dir = "~/slurm-mcp-downloads"
 # exist on the chosen partitions (A100-80Gb is only on shared-gpu, and the job simply runs
 # there). "private-kruse-gpu" is one group's partition: replace it with yours.
 # The max_* keys are hard caps.
-max_array_size = 100
+max_array_size = 10000            # Baobab: Slurm MaxArraySize = 10000 (indices 0 to 9999)
 array_concurrency = 40            # every array gets %40, as in CommonUI
 # jobs_dir = "/home/your_username/scratch/sims/slurm-mcp-jobs"   # generated scripts go here
 
@@ -90,6 +127,22 @@ max_gpus = 1
 gpu_types = ["H100", "A100-40Gb", "A100-80Gb"]  # all three, see the note on gpu
 max_time = "02:00:00"
 max_mem = "32G"
+
+[presets.julia_sim]               # a CommonUI-style Julia GPU sweep (ActiveDewetting): one array task per DF.csv row
+description = "Julia GPU simulation sweep, as written by CommonUI"
+gpu = true
+partition = "private-kruse-gpu,shared-gpu"
+time = "0-12:00:00"
+mem = "3000"
+cpus = 1
+max_cpus_per_gpu = 4
+gpus = 1
+max_gpus = 2
+gpu_types = ["H100", "A100-40Gb", "A100-80Gb"]
+max_time = "2-00:00:00"
+max_mem = "64G"
+modules = ["Julia"]               # default: module load Julia
+env = { use_gpu = "true" }        # default: export use_gpu=true
 
 [presets.gpu]
 description = "GPU production run (CommonUI defaults)"

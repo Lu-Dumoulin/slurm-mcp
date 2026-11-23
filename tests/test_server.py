@@ -4,7 +4,7 @@ from fakes import FakeRunner
 from slurm_mcp.cluster import Cluster
 from slurm_mcp.server import build_server
 
-EXPECTED = {"queue", "recent_jobs", "job_status", "job_log", "diagnose_job", "tail_file",
+EXPECTED = {"check_setup", "cluster_info", "read_file", "grep_file", "storage_info", "queue", "recent_jobs", "job_status", "job_log", "diagnose_job", "tail_file",
             "list_files", "read_parameter_table", "fetch_results"}
 
 

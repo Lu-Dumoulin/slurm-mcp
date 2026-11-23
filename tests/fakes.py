@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -29,6 +30,16 @@ class FakeRunner:
         if argv[0] == "scp":
             return self._scp(argv)
         remote = argv[-1]
+        if argv[0] == "ssh" and remote.startswith("mv -f -- "):          # the atomic rename after an upload
+            src, dst = shlex.split(remote)[3:5]
+            if src in self.uploads:
+                self.uploads[dst] = self.uploads.pop(src)
+            return Result(tuple(argv), 0, "", "")
+        if argv[0] == "ssh" and remote.startswith("rm -f -- "):
+            self.uploads.pop(shlex.split(remote)[3], None)
+            return Result(tuple(argv), 0, "", "")
+        if argv[0] == "ssh" and remote.startswith("realpath -m -- ") and not any("realpath" in k for k in self.ssh_replies):
+            return Result(tuple(argv), 0, shlex.split(remote)[3] + "\n", "")       # no symlinks unless a test scripts one
         for needle, (out, rc) in self.ssh_replies.items():
             if needle in remote:
                 return Result(tuple(argv), rc, out, "" if rc == 0 else "boom")
@@ -53,7 +64,7 @@ def make_config(tmp_path: Path, **over) -> Config:
     base = dict(
         host="login.example.org", user="alice",
         remote_roots=("/scratch/alice",), local_dir=tmp_path / "dl",
-        control_dir=tmp_path / "cm",
+        control_dir=tmp_path / "cm", upload_from_cwd=False,
     )
     base.update(over)
     return Config(**base)

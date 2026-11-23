@@ -12,7 +12,7 @@ PRESETS = {
 
 def cfg_for(tmp_path, **over):
     d = dict(host="h.example.org", user="alice", remote_roots=["/scratch/alice"], local_dir=str(tmp_path / "dl"),
-             enable_writes=True, gpu_types=GPUS, presets=PRESETS)
+             enable_writes=True, gpu_types=GPUS, presets=PRESETS, upload_from_cwd=False)
     d.update(over)
     return Config.from_dict(d)
 
@@ -138,3 +138,13 @@ def test_smoke_asks_before_creating_the_jobs_folder(tmp_path):
     run_doctor(cfg_for(tmp_path), NoFolder(replies), out, lambda p: asked.append(p) or "n", smoke=True, sleep=lambda s: None)
     assert any("Create the folder" in p for p in asked)
     assert "nothing was created" in "\n".join(out)
+
+
+def test_doctor_reports_upload_folders(tmp_path):
+    out = Lines()
+    cfg = cfg_for(tmp_path, local_roots=[str(tmp_path)])
+    run_doctor(cfg, FakeRunner(ssh_replies=dict(GOOD)), out, lambda p: "n")
+    assert f"[  OK] upload folder {tmp_path.resolve()}: listed in local_roots" in "\n".join(out)
+    off = Lines()
+    run_doctor(cfg_for(tmp_path), FakeRunner(ssh_replies=dict(GOOD)), off, lambda p: "n")
+    assert "[WARN] code upload: off" in "\n".join(off)

@@ -49,7 +49,8 @@ def test_example_config_stays_valid():
 
     example = Path(__file__).resolve().parent.parent / "config.example.toml"
     cfg = Config.from_dict(tomllib.loads(example.read_text()))
-    assert {"smoke", "debug", "standard", "gpu_debug", "gpu"} <= set(cfg.presets)
+    assert {"smoke", "debug", "standard", "gpu_debug", "gpu", "julia_sim"} <= set(cfg.presets)
+    assert cfg.presets["julia_sim"].modules == ("Julia",) and dict(cfg.presets["julia_sim"].env) == {"use_gpu": "true"}
     assert set(cfg.gpu_types) == {"H100", "A100-40Gb", "A100-80Gb"}  # CommonUI's ENUM_GPUs
     gpu = cfg.presets["gpu"]
     assert gpu.gpu_types == ("H100", "A100-40Gb", "A100-80Gb") and gpu.time == "0-12:00:00" and gpu.mem == "3000M"

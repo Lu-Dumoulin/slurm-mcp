@@ -33,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"slurm-mcp: {exc}", file=sys.stderr)
         return 2
     cfg.control_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    cfg.control_dir.chmod(0o700)        # also fixes a folder created earlier with looser permissions
 
     if args.command == "doctor":
         from .doctor import run_doctor

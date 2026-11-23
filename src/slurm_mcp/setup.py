@@ -111,6 +111,10 @@ def run_init(
             "remote_roots": [r.strip() for r in roots_text.split(",") if r.strip()],
             "local_dir": _ask("Local folder for downloaded results", input_fn, "~/slurm-mcp-downloads"),
         }
+        upload = _ask("Extra local folders the agent may upload code from, besides the folder it is "
+                      "started in (comma-separated, Enter to skip, e.g. ~/Documents/GitHub)", input_fn)
+        if upload:
+            data["local_roots"] = [p.strip() for p in upload.split(",") if p.strip()]
         df = _ask("Default parameter table path on the cluster (optional, Enter to skip)", input_fn)
         if df:
             data["df_csv"] = df

@@ -20,7 +20,7 @@ def wcfg(tmp_path):
 
 def wcluster(cfg, **replies):
     base = {"test -f": ("", 0), "head -c": ("#!/bin/bash\n#SBATCH -n 1\n", 0), "sbatch": ("1234\n", 0),
-            "squeue": (QUEUE, 0), "scancel": ("", 0)}
+            "squeue": (QUEUE, 0), "scancel": ("", 0), "sha256sum": ("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  /x\n", 0)}
     base.update(replies)
     return Cluster(cfg, FakeRunner(ssh_replies=base))
 
@@ -38,7 +38,7 @@ def test_submit_dry_run_changes_nothing_and_shows_the_command(wcfg):
     cl = wcluster(wcfg)
     plan = cl.plan_submit(SCRIPT)
     assert plan["command"] == f"sbatch --parsable --chdir=/scratch/alice/run {SCRIPT}"
-    assert "#SBATCH" in plan["script_preview"] and plan["confirmation_token"]
+    assert "#SBATCH" in plan["script_text"] and plan["confirmation_token"]
     assert not any(x.startswith("sbatch") for x in cl.runner.remote_commands())
 
 
@@ -118,13 +118,13 @@ def test_server_exposes_write_tools_only_when_enabled(cfg, wcfg):
     assert not {"submit_job", "cancel_job"} & off
     assert {"submit_job_dry_run", "submit_job", "cancel_job_dry_run", "cancel_job"} <= set(on)
     assert on["cancel_job"].annotations.destructive_hint is True
-    assert on["submit_job"].annotations.read_only_hint is False
+    assert on["submit_job"].annotations.read_only_hint is False and on["submit_job"].annotations.destructive_hint is True
     assert on["submit_job_dry_run"].annotations.read_only_hint is True
-    for name in ("submit_job", "cancel_job"):  # the real calls take only a token
-        assert list(on[name].input_schema["properties"]) == ["confirmation_token"]
+    for name in ("submit_job", "cancel_job"):  # the real calls take the token and the review text, nothing else
+        assert list(on[name].input_schema["properties"]) == ["confirmation_token", "review_text"]
 
 
 def test_full_flow_through_server_with_messages(wcfg):
     server = build_server(wcluster(wcfg))
     with pytest.raises(ToolError, match="unknown or expired"):
-        asyncio.run(server.call_tool("submit_job", {"confirmation_token": "guess"}))
+        asyncio.run(server.call_tool("submit_job", {"confirmation_token": "guess", "review_text": "x"}))

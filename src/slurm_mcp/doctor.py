@@ -7,6 +7,7 @@ token path as the MCP tools.
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 
@@ -50,11 +51,11 @@ def run_doctor(
 
     report("OK", "config", f"{cfg.user}@{cfg.host}, {len(cfg.remote_roots)} root(s), "
            f"{len(cfg.presets)} preset(s), writes {'enabled' if cfg.enable_writes else 'disabled'}")
-    try:
-        cfg.local_dir.mkdir(parents=True, exist_ok=True)
-        report("OK", "local download folder", str(cfg.local_dir))
-    except OSError as exc:
-        report("FAIL", "local download folder", str(exc))
+    parent = cfg.local_dir if cfg.local_dir.exists() else cfg.local_dir.parent
+    ok = parent.is_dir() and os.access(parent, os.W_OK)
+    report("OK" if ok else "WARN", "local download folder",
+           str(cfg.local_dir) + ("" if cfg.local_dir.exists() else " (will be created on the first download)") if ok
+           else f"{cfg.local_dir}: cannot be written")
 
     try:
         cluster._ssh(["true"])
@@ -100,6 +101,15 @@ def run_doctor(
     if cfg.enable_writes:
         exists = cluster._probe(cmd.test_dir_cmd(cfg.scripts_dir))
         report("OK" if exists else "WARN", "jobs folder", cfg.scripts_dir + ("" if exists else " (will be created)"))
+
+    if cfg.enable_writes:
+        if not cluster.upload_roots:
+            report("WARN", "code upload", "off: no allowed local folder. Run the agent in your project folder, "
+                   "or add local_roots to the config")
+        for r in cluster.upload_roots:
+            report("OK" if r.path.is_dir() else "WARN", f"upload folder {r.path}", r.rule)
+        for note in cluster.upload_notes:
+            report("WARN", "code upload", note)
 
     if smoke:
         fails += _smoke(cluster, cfg, preset, out, input_fn, sleep, poll_s, wait_s)

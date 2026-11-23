@@ -14,12 +14,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .errors import SlurmMcpError
+from .sbatchopts import SbatchOptions
 from .presets import (
-    FEATURE_RE, Preset, format_time, parse_mem_mb, parse_time, normalize_mem,
+    FEATURE_RE, MODULE_RE, Preset, check_env, format_time, normalize_mem, parse_mem_mb, parse_time,
 )
 
 JOB_NAME_RE = re.compile(r"[A-Za-z0-9_.-]{1,40}")
-MODULE_RE = re.compile(r"[A-Za-z0-9_./+-]{1,60}")
 ARRAY_RE = re.compile(r"\d{1,6}(-\d{1,6})?(,\d{1,6}(-\d{1,6})?)*")
 TASK_ID = "{task_id}"
 MAX_ARGS = 50
@@ -44,6 +44,9 @@ class JobSpec:
     array_tasks: int = 0
     array_concurrency: int = 40
     modules: tuple[str, ...] = ()
+    env: tuple[tuple[str, str], ...] = ()
+    task_dir: str | None = None   # per-task folder template, may contain {task_id}
+    options: SbatchOptions = SbatchOptions()
 
 
 def count_array_tasks(spec: str) -> int:
@@ -57,6 +60,11 @@ def count_array_tasks(spec: str) -> int:
             raise SlurmMcpError(f"invalid array range {item!r}")
         total += hi_i - lo_i + 1
     return total
+
+
+def highest_array_index(spec: str) -> int:
+    """Largest task index in a validated array spec (Slurm limits indices to below MaxArraySize)."""
+    return max(int(part) for item in spec.split(",") for part in item.split("-"))
 
 
 def resolve_spec(
@@ -74,7 +82,10 @@ def resolve_spec(
     gpus: int | None = None,
     array: str | None = None,
     modules: Sequence[str] | None = None,
-    max_array_size: int = 100,
+    env: dict[str, str] | None = None,
+    task_dir: str | None = None,
+    options: SbatchOptions | None = None,
+    max_array_size: int = 10000,
     array_concurrency: int = 40,
 ) -> JobSpec:
     if not isinstance(gpu, bool):
@@ -128,15 +139,26 @@ def resolve_spec(
         tasks = count_array_tasks(array)
         if tasks > max_array_size:
             raise SlurmMcpError(f"array has {tasks} tasks, the limit is {max_array_size}")
-    elif any(TASK_ID in a for a in args):
-        raise SlurmMcpError(f"{TASK_ID} in the command needs an array")
+        if highest_array_index(array) >= max_array_size:
+            raise SlurmMcpError(
+                f"array index {highest_array_index(array)} is too high: indices must be below {max_array_size} "
+                "(Slurm's MaxArraySize)")
+    mods = tuple(modules) if modules else preset.modules
+    variables = {**dict(preset.env), **(check_env(env) if env else {})}
+    uses_task_id = (any(TASK_ID in a for a in args) or any(TASK_ID in v for v in variables.values())
+                    or (task_dir is not None and TASK_ID in task_dir))
+    if uses_task_id and not array:
+        raise SlurmMcpError(f"{TASK_ID} in the command, env or task_dir needs an array")
+    if task_dir is not None and (not task_dir.startswith("/") or "\n" in task_dir):
+        raise SlurmMcpError("task_dir must be an absolute path")
 
-    mods = tuple(modules or ())
+    mods = tuple(mods)
     if len(mods) > 10 or not all(MODULE_RE.fullmatch(m) for m in mods):
         raise SlurmMcpError("modules: at most 10 names made of letters, digits and ./+-_")
 
     return JobSpec(preset.name, job_name, preset.partition, use_time, use_cpus, use_mem, workdir,
-                   args, gpu, use_gpus, names, constraint, array or None, tasks, array_concurrency, mods)
+                   args, gpu, use_gpus, names, constraint, array or None, tasks, array_concurrency, mods,
+                   tuple(variables.items()), task_dir, options or SbatchOptions())
 
 
 def quote_arg(arg: str) -> str:
@@ -162,11 +184,18 @@ def build_script(spec: JobSpec) -> str:
         lines.append(f"#SBATCH --gpus={spec.gpus}")
         if spec.constraint:
             lines.append(f"#SBATCH --constraint={spec.constraint}")
+    lines += spec.options.header()
     lines.append("")
     lines += [f"module load {m}" for m in spec.modules]
     if spec.modules:
         lines.append("")
-    lines.append(f"cd {shlex.quote(spec.workdir)} || exit 1")
+    lines += [f"export {name}={quote_arg(value)}" for name, value in spec.env]
+    if spec.env:
+        lines.append("")
+    if spec.task_dir is not None:
+        lines += [f"task_dir={quote_arg(spec.task_dir)}", 'mkdir -p "$task_dir"', 'cd "$task_dir" || exit 1']
+    else:
+        lines.append(f"cd {shlex.quote(spec.workdir)} || exit 1")
     lines.append("srun " + " ".join(quote_arg(a) for a in spec.command))
     return "\n".join(lines) + "\n"
 
@@ -174,5 +203,12 @@ def build_script(spec: JobSpec) -> str:
 def summarize(spec: JobSpec) -> str:
     tasks = spec.array_tasks or 1
     gpu = (f"GPU: yes, {spec.gpus} x {'|'.join(spec.gpu_types) or 'any'}" if spec.gpu else "GPU: no")
+    extra = ""
+    if spec.env:
+        extra += f", env: {', '.join(n for n, _ in spec.env)}"
+    if spec.task_dir is not None:
+        extra += f", one folder per task under {spec.task_dir.split(TASK_ID)[0]}"
+    if spec.options.describe():
+        extra += f", {spec.options.describe()}"
     return (f"{tasks} task(s), {spec.cpus} CPU(s) each, up to {format_time(parse_time(spec.time))} each, "
-            f"{spec.mem} each, partition {spec.partition}, {gpu}")
+            f"{spec.mem} each, partition {spec.partition}, {gpu}{extra}")

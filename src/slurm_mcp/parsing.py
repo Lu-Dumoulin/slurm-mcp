@@ -81,6 +81,116 @@ def parse_partition_features(text: str) -> dict[str, set[str]]:
     return out
 
 
+def _split_top_level(text: str) -> list[str]:
+    """Split a GRES string on commas that are not inside parentheses."""
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return [p for p in parts + [cur] if p]
+
+
+def _number_first(text: str) -> tuple[int, str]:
+    """Sort key for values like 12+ and 64: by the leading number."""
+    m = re.match(r"\d+", text)
+    return (int(m.group()) if m else 0, text)
+
+
+def parse_partitions(text: str) -> list[dict]:
+    """`sinfo -o '%P|%l|%D|%c|%m|%G'` rows merged per partition (one row per kind of node)."""
+    merged: dict[str, dict] = {}
+    for line in text.splitlines():
+        parts = [p.strip() for p in line.split(FIELD_SEP)]
+        if len(parts) != 6:
+            continue
+        name, limit, nodes, cpus, mem, gres = parts
+        entry = merged.setdefault(name.rstrip("*"), {
+            "partition": name.rstrip("*"), "default": name.endswith("*"), "time_limit": limit,
+            "nodes": 0, "cpus_per_node": set(), "memory_mb": set(), "gres": []})
+        entry["nodes"] += int(nodes) if nodes.isdigit() else 0
+        entry["cpus_per_node"].add(cpus)
+        entry["memory_mb"].add(mem)
+        for g in _split_top_level(gres):
+            g = re.sub(r"\(S:[^)]*\)", "", g)  # drop the socket annotation
+            if g not in ("(null)", "") and g not in entry["gres"]:
+                entry["gres"].append(g)
+    out = []
+    for e in merged.values():
+        e["cpus_per_node"] = sorted(e["cpus_per_node"], key=_number_first)
+        e["memory_mb"] = sorted(e["memory_mb"], key=_number_first)
+        out.append(e)
+    return out
+
+
+def parse_slurm_limits(text: str, keys: tuple[str, ...]) -> dict[str, str]:
+    """Selected `Key = value` lines of `scontrol show config`."""
+    found = {}
+    for line in text.splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k.strip() in keys:
+            found[k.strip()] = v.strip()
+    return found
+
+
+_UNIT = {"B": 1, "KiB": 1024, "MiB": 1024**2, "GiB": 1024**3, "TiB": 1024**4, "PiB": 1024**5}
+
+
+def _size_bytes(text: str) -> int | None:
+    """`530.46 GiB` to bytes; None for `unlimited` or anything else."""
+    parts = text.split()
+    if len(parts) == 2 and parts[1] in _UNIT:
+        try:
+            return int(float(parts[0]) * _UNIT[parts[1]])
+        except ValueError:
+            return None
+    return None
+
+
+def _count(text: str) -> int | None:
+    t = text.replace(",", "").strip()
+    return int(t) if t.isdigit() else None
+
+
+def parse_beegfs_quota(text: str) -> list[dict] | None:
+    """The table printed by Baobab's beegfs-get-quota-home-scratch.sh, one entry per storage row.
+    Returns None when the output does not look like that table, so the caller can show it as is."""
+    rows = []
+    for line in text.splitlines():
+        cells = [c.strip() for c in line.split("|") if c.strip()]
+        if len(cells) == 7 and cells[0] in ("home", "scratch") and cells[2].isdigit():
+            rows.append({
+                "storage": cells[0], "name": cells[1], "id": int(cells[2]),
+                "size_used": cells[3], "size_hard": cells[4], "files_used": cells[5], "files_hard": cells[6],
+                "size_used_bytes": _size_bytes(cells[3]), "size_hard_bytes": _size_bytes(cells[4]),
+                "files_used_count": _count(cells[5]), "files_hard_count": _count(cells[6]),
+                "size_unlimited": cells[4].lower() == "unlimited", "files_unlimited": cells[6].lower() == "unlimited",
+            })
+    return rows or None
+
+
+def parse_df(text: str) -> dict | None:
+    """Last row of `df -P -k` as byte counts."""
+    lines = [ln.split() for ln in text.strip().splitlines()]
+    if len(lines) < 2 or len(lines[-1]) < 6:
+        return None
+    fs, total, used, avail, pct, mount = lines[-1][0], lines[-1][1], lines[-1][2], lines[-1][3], lines[-1][4], " ".join(lines[-1][5:])
+    if not (total.isdigit() and used.isdigit() and avail.isdigit()):
+        return None
+    return {"filesystem": fs, "total_bytes": int(total) * 1024, "used_bytes": int(used) * 1024,
+            "available_bytes": int(avail) * 1024, "use_percent": pct, "mounted_on": mount}
+
+
+def parse_du(text: str) -> int | None:
+    """Bytes from `du -s -k` output (first column)."""
+    first = text.strip().split("\t", 1)[0].split(" ", 1)[0]
+    return int(first) * 1024 if first.isdigit() else None
+
+
 def parse_find(text: str) -> list[RemoteFile]:
     files = []
     for line in text.splitlines():

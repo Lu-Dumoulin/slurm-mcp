@@ -108,7 +108,7 @@ REMOTE = {"/scratch/alice/run/r/a.csv": (b"aaa", 1700000000.0),
 
 def test_fetch_is_incremental(cfg):
     c = cluster(cfg, ssh_replies={"find": (LISTING, 0)}, remote_files=REMOTE)
-    first = c.fetch_results("/scratch/alice/run")
+    first = c.fetch_results("/scratch/alice/run", dry_run=False)
     assert first["downloaded"] == ["r/a.csv", "r/b.csv"]
     assert first["skipped_unsafe_names"] == 1
     dest = cfg.local_dir / "scratch/alice/run/r/a.csv"
@@ -116,17 +116,17 @@ def test_fetch_is_incremental(cfg):
     assert not list(cfg.local_dir.rglob("*.part"))
 
     scp_before = sum(1 for x in c.runner.calls if x[0] == "scp")
-    second = c.fetch_results("/scratch/alice/run")
+    second = c.fetch_results("/scratch/alice/run", dry_run=False)
     assert second["downloaded"] == [] and second["up_to_date"] == 2
     assert sum(1 for x in c.runner.calls if x[0] == "scp") == scp_before
 
 
 def test_fetch_picks_up_only_changed_file(cfg):
     c = cluster(cfg, ssh_replies={"find": (LISTING, 0)}, remote_files=REMOTE)
-    c.fetch_results("/scratch/alice/run")
+    c.fetch_results("/scratch/alice/run", dry_run=False)
     c.runner.ssh_replies["find"] = (LISTING.replace("r/b.csv\t4\t1700000100.0", "r/b.csv\t6\t1700000500.0"), 0)
     c.runner.remote_files["/scratch/alice/run/r/b.csv"] = (b"bbbbbb", 1700000500.0)
-    again = c.fetch_results("/scratch/alice/run")
+    again = c.fetch_results("/scratch/alice/run", dry_run=False)
     assert again["downloaded"] == ["r/b.csv"]
 
 
@@ -143,12 +143,12 @@ def test_fetch_size_cap(tmp_path):
     cfg = make_config(tmp_path, max_download_mb=1)
     c = cluster(cfg, ssh_replies={"find": (f"f\tbig.bin\t{2*1024*1024}\t1.0\n", 0)})
     with pytest.raises(SlurmMcpError, match="refusing"):
-        c.fetch_results("/scratch/alice/run")
+        c.fetch_results("/scratch/alice/run", dry_run=False)
 
 
 def test_fetch_failed_file_leaves_no_partial(cfg):
     c = cluster(cfg, ssh_replies={"find": (LISTING, 0)}, remote_files={k: v for k, v in REMOTE.items() if k.endswith("a.csv")})
-    out = c.fetch_results("/scratch/alice/run")
+    out = c.fetch_results("/scratch/alice/run", dry_run=False)
     assert out["downloaded"] == ["r/a.csv"] and out["failed"][0]["path"] == "r/b.csv"
     assert not list(cfg.local_dir.rglob("*.part"))
 

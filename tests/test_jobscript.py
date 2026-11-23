@@ -87,8 +87,14 @@ def test_caps_are_enforced():
 
 
 def test_array_limits_and_task_id_placeholder():
+    with pytest.raises(SlurmMcpError, match="limit is 10000"):
+        spec(array="1-10001")
+    with pytest.raises(SlurmMcpError, match="indices must be below 10000"):
+        spec(array="1-10000")                       # 10000 tasks, but index 10000 is above Slurm's limit
+    assert spec(array="0-9999").array_tasks == 10000
+    assert spec(array="1-9999").array_tasks == 9999
     with pytest.raises(SlurmMcpError, match="limit is 100"):
-        spec(array="1-101")
+        spec(array="1-101", max_array_size=100)
     with pytest.raises(SlurmMcpError, match="invalid array"):
         spec(array="1-5; scancel -u me")
     with pytest.raises(SlurmMcpError, match="needs an array"):

@@ -35,7 +35,7 @@ def pcfg(tmp_path):
 
 
 def pcluster(cfg, **replies):
-    base = {"test -d": ("", 0), "mkdir": ("", 0), "sbatch": ("777\n", 0), "sinfo": (SINFO, 0)}
+    base = {"test -d": ("", 0), "mkdir": ("", 0), "sbatch": ("777\n", 0), "sinfo": (SINFO, 0), "squeue": ("", 0)}
     base.update(replies)
     return Cluster(cfg, FakeRunner(ssh_replies=base))
 
