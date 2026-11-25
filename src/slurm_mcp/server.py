@@ -11,6 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 from .cluster import Cluster
+from .doctor import run_doctor   # imported at start, never inside a tool: see tests/test_server_imports.py
 from .errors import SlurmMcpError
 
 INSTRUCTIONS = (
@@ -69,8 +70,6 @@ def build_server(cluster: Cluster) -> MCPServer:
     @reportable
     def check_setup() -> dict[str, Any]:
         """Check that the setup works: config, SSH connection, squeue, roots, presets, GPU types, upload folders. Read-only, the same checks as `slurm-mcp doctor` without the smoke test."""
-        from .doctor import run_doctor
-
         lines: list[str] = []
         code = run_doctor(cluster.cfg, cluster.runner, lines.append, lambda _: "n")
         return {"ok": code == 0, "checks": [ln for ln in lines if ln.startswith("[")], "summary": lines[-1] if lines else ""}
